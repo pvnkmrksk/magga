@@ -82,7 +82,9 @@ util::geo::MultiLine<double> Labeller::getStationLblBand(
 void Labeller::labelStations(const RenderGraph& g, bool notdeg2) {
   std::vector<const shared::linegraph::LineNode*> orderedNds;
   for (auto n : g.getNds()) {
-    if (n->pl().stops().size() == 0 || (notdeg2 && n->getDeg() == 2)) continue;
+    if (n->pl().stops().size() == 0 || 
+        (notdeg2 && n->getDeg() == 2) || 
+        (_cfg->dontLabelDeg3 && n->getDeg() == 3)) continue;
     orderedNds.push_back(n);
   }
 

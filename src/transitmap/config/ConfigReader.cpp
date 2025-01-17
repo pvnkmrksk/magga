@@ -60,6 +60,8 @@ void ConfigReader::help(const char* bin) const {
             << "textsize for station labels\n"
             << std::setw(37) << "  --no-deg2-labels"
             << "no labels for deg-2 stations\n"
+            << std::setw(37) << "  --no-deg3-labels"
+            << "no labels for deg-3 stations\n"
 #ifdef PROTOBUF_FOUND
             << std::setw(37) << "  -z [ --zoom ] (=14)"
             << "zoom level to write for MVT tiles, comma separated or range\n"
@@ -98,9 +100,10 @@ void ConfigReader::read(Config* cfg, int argc, char** argv) const {
                          {"line-spacing", required_argument, 0, 3},
                          {"outline-width", required_argument, 0, 4},
                          {"from-dot", no_argument, 0, 'D'},
-                         {"no-deg2-labels", no_argument, 0, 16},
                          {"line-label-textsize", required_argument, 0, 5},
                          {"station-label-textsize", required_argument, 0, 6},
+                         {"no-deg2-labels", no_argument, 0, 16},
+                         {"no-deg3-labels", no_argument, 0, 20},
                          {"no-render-stations", no_argument, 0, 7},
                          {"labels", no_argument, 0, 'l'},
                          {"tight-stations", no_argument, 0, 9},
@@ -174,6 +177,9 @@ void ConfigReader::read(Config* cfg, int argc, char** argv) const {
         break;
       case 16:
         cfg->dontLabelDeg2 = true;
+        break;
+      case 20:
+        cfg->dontLabelDeg3 = true;
         break;
       case 17:
         cfg->mvtPath = optarg;

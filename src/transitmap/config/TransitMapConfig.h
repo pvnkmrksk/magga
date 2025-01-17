@@ -38,6 +38,7 @@ struct Config {
   bool renderEdges = true;
   bool renderLabels = false;
   bool dontLabelDeg2 = false;
+  bool dontLabelDeg3 = false;
   bool fromDot = false;
 
   bool randomColors = false;

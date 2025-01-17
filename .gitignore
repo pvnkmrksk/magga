@@ -30,3 +30,9 @@ compile_commands.json
 *.pdf
 *.png
 *.svg
+buildbu/*
+cmake/GetGitRevisionDescription.cmake
+cmake/GetGitRevisionDescription.cmake.in
+examples/temp_pipeline.json.1
+examples/temp_pipeline.json.2
+src/util
