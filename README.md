@@ -4,28 +4,39 @@
 
 A toolkit for weaving transit data into beautiful, meaningful maps.
 
-## About Magga
+"Magga" carries dual meaning — a loom (ಮಗ್ಗ) in Kannada that weaves intricate patterns, and "path" (मग्ग) in Pali, referring to the noble path toward enlightenment. We weave transit routes into readable maps, illuminating paths toward sustainable and equitable mobility.
 
-"Magga" carries dual meaning - a loom (ಮಗ್ಗ) in Kannada that weaves intricate patterns, and "path" (मग्ग) in Pali Buddhism, referring to the noble path to enlightenment. This duality perfectly captures our mission: just as a loom weaves threads into beautiful patterns, we weave transit routes into readable maps. And just as the Noble Eightfold Path guides beings toward enlightenment, accessible public transit guides communities toward sustainability and equity.
+## Quick Reference
 
-In cities where most of humanity now lives and where the majority of CO2 emissions occur, public transit serves as a crucial path toward:
-- Reducing environmental impact and fighting climate change
-- Connecting people to opportunities and lifting communities from poverty
-- Creating more livable, sustainable urban spaces
-- Weaving the social fabric that binds communities together
+```bash
+# End-to-end: GTFS zip → geographic + schematic SVG maps
+./process_transit_map.sh data.zip
 
-## Features
+# Filter to specific stops and routes
+./process_transit_map.sh data.zip -s "STOP1,STOP2" -r "138*" -m 10
 
-- Generate both geographic and schematic transit maps
-- Interactive visualization tools for exploring transit networks
-- Flexible filtering and subsetting of GTFS data
-- Customizable styling and appearance
-- Automated text size adjustment for optimal readability
-- Support for various transit modes (bus, tram, rail, etc.)
+# Interactive HTML map of a GTFS file
+python gtfs_map_viewer.py data.zip -o map.html
 
-## Quick Start
+# Create a filtered GTFS subset
+python gtfs_subset_cli.py data.zip -s "STOP1,STOP2" -m 15 -o subset.zip
 
-### Installation
+# Create subset + generate interactive map in one step
+python gtfs_subset_cli.py data.zip -r "138*" -m 10 --map
+
+# Manual pipeline: GTFS → graph → topo → loom → schematic SVG
+gtfs2graph -m bus subset.zip | topo --smooth 20 -d 150 | loom | octi | transitmap -l > map.svg
+
+# Geographic map (skip octi for non-schematic layout)
+gtfs2graph -m bus subset.zip | topo --smooth 20 -d 150 | loom | transitmap -l > geo.svg
+
+# Shrink text in a generated SVG to 85% size
+python adjust_svg.py input.svg output.svg 0.85
+```
+
+## Installation
+
+### C++ Pipeline Tools
 
 ```bash
 git clone --recurse-submodules https://github.com/pvnkmrksk/magga.git
@@ -35,176 +46,257 @@ cmake ..
 make -j
 ```
 
+If you already cloned without `--recurse-submodules`:
+```bash
+git submodule update --init --recursive
+```
+
 Optionally install system-wide:
 ```bash
-make install
+sudo make install
 ```
 
-### Basic Usage
+### Python Dependencies
 
-Generate a transit map from GTFS data:
 ```bash
-./process_transit_map.sh input.zip
+pip install -r requirements.txt
 ```
 
-Filter specific routes and stops:
-```bash
-./process_transit_map.sh input.zip --stops "stop1,stop2" --routes "1,2,3"
+Required packages: pandas, partridge, folium, branca, matplotlib, numpy, natsort, tqdm.
+
+### GTFS Data
+
+You need GTFS (General Transit Feed Specification) zip files as input. Download them from:
+- [Transitland](https://www.transit.land/feeds)
+- [OpenMobilityData](https://openmobilitydata.org/)
+- Your local transit agency's open data portal
+
+## Tools
+
+### process_transit_map.sh — Full Pipeline
+
+Automates the entire flow: GTFS filtering → graph conversion → layout → SVG rendering → text adjustment.
+
+```
+Usage: ./process_transit_map.sh <gtfs_file> [options]
+
+Data Filtering:
+  -s, --stops <ids>           Comma-separated stop IDs to include
+  -r, --routes <patterns>     Route patterns (supports wildcards, e.g. "138*")
+  -m, --min-trips <num>       Minimum trips per route (default: 15)
+  -d, --max-dist <meters>     Max aggregation distance (default: 150)
+  -sm, --smooth <value>       Smoothing factor (default: 20)
+
+Visual Styling:
+  -w, --line-width <px>       Line width (default: 20)
+  -sp, --line-spacing <px>    Space between parallel lines (default: 10)
+  -sl, --station-label-size   Station label text size (default: 60)
+  -ll, --line-label-size      Line label text size (default: 40)
+  -ts, --text-shrink <ratio>  Text shrink ratio 0-1 (default: 0.85)
+
+Output:
+  -o, --output-dir <path>     Output directory (default: output)
+  -v, --verbose               Enable detailed logging
 ```
 
-Create an interactive web visualization:
+**Examples:**
 ```bash
-python gtfs_map_viewer.py input.zip
+# Basic — all routes with ≥15 trips
+./process_transit_map.sh city_transit.zip
+
+# Specific stops, custom styling
+./process_transit_map.sh city_transit.zip -s "STOP1,STOP2" -w 25 -sl 70
+
+# Wildcard route filtering with lower trip threshold
+./process_transit_map.sh city_transit.zip -r "138*,KBS*" -m 5 -o maps/
+```
+
+**Output:**
+```
+output/
+├── <name>.zip                    # Filtered GTFS subset
+├── <name>_loom.json              # Intermediate graph data
+├── <name>_geographic.svg         # Geographic layout map
+└── <name>_schematic.svg          # Schematic (octilinear) map
+```
+
+### gtfs_subset_cli.py — GTFS Filtering
+
+Create filtered subsets of GTFS data, optionally with an interactive HTML map.
+
+```
+Usage: python gtfs_subset_cli.py <input.zip> [options]
+
+  -o, --output <path>         Output GTFS path (auto-generated if omitted)
+  -s, --stops <ids>           Comma-separated stop IDs
+  -r, --routes <patterns>     Route patterns (wildcards supported)
+  -m, --min-trips <num>       Minimum trips per route
+  --map                       Generate interactive HTML map
+  --map-output <path>         Custom map output path
+  --color-by {trips,routes}   Metric for coloring stops (default: trips)
+  --cmap <name>               Matplotlib colormap for stops (default: magma)
+  --route-cmap <name>         Matplotlib colormap for routes (default: tab20c)
+```
+
+**Examples:**
+```bash
+# Filter to stops and generate a map
+python gtfs_subset_cli.py city.zip -s "MAIN_ST,CENTRAL" --map
+
+# Routes matching a pattern, min 10 trips
+python gtfs_subset_cli.py city.zip -r "138*,KBS*" -m 10 -o filtered.zip
+
+# Custom visualization
+python gtfs_subset_cli.py city.zip --map --color-by routes --cmap viridis
+```
+
+### gtfs_map_viewer.py — Interactive HTML Maps
+
+Generates an interactive web map from a GTFS file with routes and stops.
+
+```
+Usage: python gtfs_map_viewer.py <input.zip> [options]
+
+  -o, --output <path>         Output HTML path (default: transit_map.html)
+  --stops-only                Show only stops, hide routes
+  --color-by {trips,routes}   Metric for coloring stops (default: trips)
+  --cmap <name>               Colormap for stops (default: magma)
+  --route-cmap <name>         Colormap for routes (default: magma)
+```
+
+**Examples:**
+```bash
+python gtfs_map_viewer.py city.zip -o city_map.html
+python gtfs_map_viewer.py city.zip --color-by routes --cmap YlOrRd
+python gtfs_map_viewer.py city.zip --stops-only --cmap viridis
+```
+
+### adjust_svg.py — SVG Text Adjustment
+
+Scales text sizes in generated SVG maps for better readability.
+
+```
+Usage: python adjust_svg.py <input_svg> <output_svg> <scale_factor>
+
+  scale_factor: e.g. 0.85 to shrink text to 85%, 1.2 to enlarge to 120%
 ```
 
 ### Manual Pipeline
 
-For more control, you can run the pipeline tools individually:
+For fine-grained control, run the C++ tools individually:
 
 ```bash
-# Create a filtered subset of GTFS data
-python gtfs_subset_cli.py input.zip --stops "3ie,sw" -m 15 -o subset.zip
+# 1. Convert GTFS to graph
+gtfs2graph -m bus subset.zip > graph.json
 
-# Generate maps using the pipeline
-gtfs2graph -m bus subset.zip | \
-    topo --smooth 20 -d 150 | \
-    loom | \
-    octi | \
-    transitmap -l --tight-stations --render-dir-markers > output.svg
+# 2. Handle overlapping edges, cluster nearby stations
+topo --smooth 20 -d 150 < graph.json > topo.json
 
-# For geographic maps, skip octilinearization
-gtfs2graph -m bus subset.zip | \
-    topo --smooth 20 -d 150 | \
-    loom | \
-    transitmap -l --tight-stations --render-dir-markers > geographic.svg
+# 3. Optimize line arrangements
+loom < topo.json > loom.json
+
+# 4a. Schematic map (octilinear layout)
+octi < loom.json | transitmap -l --tight-stations --render-dir-markers > schematic.svg
+
+# 4b. Geographic map (skip octi)
+transitmap -l --tight-stations --render-dir-markers < loom.json > geographic.svg
 ```
 
-Each step in the pipeline serves a specific purpose:
-- `gtfs2graph`: Converts GTFS to a graph format
-- `topo`: Handles overlapping edges and station clustering
-- `loom`: Optimizes line arrangements
-- `octi`: Creates schematic (octilinear) layouts
-- `transitmap`: Renders the final SVG with labels and styling
+## Helper Scripts
 
-## Tools Overview
+These are batch-processing utilities for specific workflows:
 
-### process_transit_map.sh
-The main pipeline tool that automates the entire process from GTFS to final maps. It handles:
-- GTFS subsetting and filtering
-- Geographic and schematic map generation
-- Automatic text size adjustment
-- Output organization
+| Script | Purpose | Requires |
+|--------|---------|----------|
+| `process_gtfs.sh` | Process multiple GTFS files in parallel | GNU `parallel` |
+| `process_doublets.sh` | Process doublet stop pairs from CSV | `Doublet_stops.csv` |
+| `process_doublet_stops.py` | Python version of doublet processing | `Doublet_stops.csv` |
+| `process_top_stops.py` | Batch analysis of top stops (**experimental**, has known issues) | Hardcoded paths |
 
-### gtfs_subset_cli.py
-A tool for creating focused subsets of GTFS data based on:
-- Specific stops or routes
-- Minimum trip counts
-- Pattern matching for route names
+```bash
+# Parallel processing of multiple GTFS files
+./process_gtfs.sh 'stop_analysis/subsets/*.zip'
 
-### gtfs_map_viewer.py
-Interactive web visualization tool featuring:
-- Route visualization with frequency-based styling
-- Stop visualization with customizable metrics
-- Detailed information popups
-- Multiple color scheme options
+# Process doublet stop pairs
+./process_doublets.sh city_transit.zip
+```
 
-### adjust_svg.py
-Post-processing tool for optimizing text sizes and spacing in generated maps.
+## Project Structure
+
+```
+magga/
+├── process_transit_map.sh      # Main pipeline script
+├── gtfs_subset_cli.py          # GTFS filtering CLI
+├── gtfs_map_viewer.py          # Interactive HTML map generator
+├── gtfs_analysis.py            # GTFS analysis library
+├── adjust_svg.py               # SVG text size adjuster
+├── requirements.txt            # Python dependencies
+├── src/                        # C++ source code
+│   ├── gtfs2graph/             #   GTFS → graph converter
+│   ├── topo/                   #   Topology handler (edge overlap, clustering)
+│   ├── loom/                   #   Line arrangement optimizer
+│   ├── octi/                   #   Octilinear (schematic) layout
+│   ├── transitmap/             #   SVG renderer with labels
+│   ├── shared/                 #   Shared utilities
+│   ├── cppgtfs/                #   GTFS C++ library (submodule)
+│   └── util/                   #   Utility library (submodule)
+├── examples/                   # Sample data and rendered maps
+├── Dockerfile                  # Docker build with Gurobi support
+└── CMakeLists.txt              # C++ build configuration
+```
 
 ## Requirements
 
-Core requirements:
-* `cmake`
-* `gcc >= 5.0` (or `clang >= 3.9`)
-* Python 3.6+
+**C++ build:**
+- cmake (3.10+)
+- gcc >= 5.0 or clang >= 3.9
+- Optional: libglpk-dev, coinor-libcbc-dev, gurobi, libzip-dev, libprotobuf-dev
 
-Optional dependencies for enhanced functionality:
-* `libglpk-dev`
-* `coinor-libcbc-dev`
-* `gurobi`
-* `libzip-dev`
-* `libprotobuf-dev`
+**Python tools:**
+- Python 3.6+
+- Packages listed in `requirements.txt`
 
-## Docker Usage
+**Helper scripts:**
+- GNU `parallel` (for `process_gtfs.sh`)
 
-You can also use the tools via Docker:
+## Docker
 
 ```bash
 docker build -t magga .
-docker run -i magga <TOOL>
+docker run -i magga gtfs2graph -m bus < input.zip
+
+# With Gurobi license for advanced optimization
+docker run -v /path/to/gurobi.lic:/gurobi/gurobi.lic magga <TOOL>
 ```
-
-For Gurobi optimization, mount your license:
-```bash
-docker run -v /path/to/gurobi:/gurobi magga <TOOL>
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-MIT License - see LICENSE file for details.
+GNU General Public License v3.0 — see [LICENSE](LICENSE) for details.
 
-## Acknowledgments
-
-This work builds upon the foundational research and implementation of the LOOM project by Hannah Bast, Patrick Brosi, and Sabine Storandt. Their groundbreaking work in transit map generation is documented in:
-
+This work builds upon the LOOM project by Hannah Bast, Patrick Brosi, and Sabine Storandt:
 - [Efficient Generation of Geographically Accurate Transit Maps](http://ad-publications.informatik.uni-freiburg.de/SIGSPATIAL_transitmaps_2018.pdf) (SIGSPATIAL 2018)
 - [Metro Maps on Octilinear Grid Graphs](http://ad-publications.informatik.uni-freiburg.de/EuroVis%20octi-maps.pdf) (EuroVis 2020)
 - [Metro Maps on Flexible Base Grids](http://ad-publications.informatik.uni-freiburg.de/SSTD_Metro%20Maps%20on%20Flexible%20Base%20Grids.pdf) (SSTD 2021)
 
-We are grateful to stand on the shoulders of these giants in our mission to make transit networks more accessible and understandable.
-
 ## Author
 
-ಪವನ ಕುಮಾರ ​| Pavan Kumar, PhD  
+ಪವನ ಕುಮಾರ | Pavan Kumar, PhD
 [@pvnkmrksk](https://github.com/pvnkmrksk)
 
 ## TODO
 
 ### Name Processing
-- [ ] Procedural name shortening
-  - Implement intelligent abbreviation rules for common words (Street → St, Road → Rd)
-  - Handle multilingual name variants
-  - Preserve uniqueness while shortening
-  - Configure maximum name length threshold
+- [ ] Procedural name shortening (Street → St, Road → Rd) with multilingual support
 
 ### Stop Consolidation
-- [ ] Lat-long based stop merging
-  - Merge stops with identical names within configurable distance threshold
-  - Preserve all stop IDs for routing purposes
-  - Calculate centroid for merged stop placement
-  - Handle edge cases with partial name matches
+- [ ] Lat-long based stop merging within configurable distance threshold
 
 ### Subsetting Features
-- [ ] Distance-based network subsetting
-  - Implement radius-based filtering from focus stop(s)
-  - Support multiple foci with union/intersection options
-  - Include connecting routes between included stops
-  - Preserve network connectivity
+- [ ] Distance-based network subsetting (radius from focus stops)
 
 ### Route Filtering
-- [ ] Pattern-based route exclusion
-  - Support glob patterns for route exclusion (e.g., "Night*", "X*")
-  - Allow regex patterns for complex matching
-  - Implement whitelist/blacklist functionality
-  - Preserve route dependencies
+- [ ] Pattern-based route exclusion (glob/regex blacklist)
 
 ### Major Junction Handling
-- [ ] Junction detection and labeling
-  - Identify major junctions based on:
-    - Number of intersecting routes
-    - Passenger volume/frequency
-    - Geographic importance
-  - Smart label placement for major junctions
-  - Configurable importance thresholds
-  - Option to show only major junction labels
-
-### Map Visualization
-- [ ] Junction-focused display
-  - Implement toggle for junction-only view
-  - Scale junction markers by importance
-  - Smart label density control
-  - Maintain visual hierarchy
+- [ ] Junction detection based on route intersection count / passenger volume
+- [ ] Smart label placement and density control for junctions

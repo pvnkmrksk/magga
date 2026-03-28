@@ -1,46 +1,9 @@
 #!/bin/bash
 
-# =============================================================================
-# Process Transit Map - Automated GTFS to Transit Map Pipeline
-# =============================================================================
-#
-# Part of the Magga (ಮಗ್ಗ/मग्ग) project - A transit map generation toolkit
-# 
-# "Magga" carries dual meaning - a loom (ಮಗ್ಗ) in Kannada that weaves intricate
-# patterns, and "path" (मग्ग) in Pali Buddhism, referring to the noble path to
-# enlightenment. Much like how a loom weaves threads into beautiful patterns,
-# public transit weaves paths through our cities. And just as the Noble Eightfold
-# Path guides beings toward enlightenment, accessible public transit guides
-# communities toward sustainability and equity - reducing emissions, connecting
-# people to opportunities, and weaving the fabric of more livable cities.
-#
-# MIT License
-#
-# Copyright (c) 2024 Pavan Kumar (@pvnkmrksk)
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-#
-# This work builds upon the LOOM project and is distributed under compatible terms.
-#
-# Author: ಪವನ ಕುಮಾರ ​| Pavan Kumar, PhD (@pvnkmrksk)
-#
-# =============================================================================
+# process_transit_map.sh - Automated GTFS to transit map pipeline
+# Part of Magga (ಮಗ್ಗ/मग्ग): https://github.com/pvnkmrksk/magga
+# License: GPL-3.0 — see LICENSE.
+# Author: Pavan Kumar (@pvnkmrksk)
 
 # Functions
 # -----------------------------------------------------------------------------
@@ -119,15 +82,9 @@ print_output_tree() {
 # @description Print usage information and help text
 print_usage() {
     cat << EOF
-Magga (ಮಗ್ಗ/मग्ग) Transit Map Generator
-====================================
+Magga Transit Map Generator — Generate geographic and schematic SVG maps from GTFS data.
 
-A tool to generate transit maps from GTFS data. Drawing inspiration from both
-the Kannada word for loom (ಮಗ್ಗ) and the Pali word for path (मग्ग), Magga weaves
-transit routes into beautiful, readable maps while illuminating the paths that
-guide communities toward sustainable and equitable mobility.
-
-Usage: 
+Usage:
     $(basename "$0") <gtfs_file> [options]
     $(basename "$0") -h | --help
 
@@ -174,11 +131,8 @@ Notes:
     - Route patterns support wildcards (e.g., "138*" matches "138A", "138B")
     - Text shrink ratio should be between 0 and 1
     - Use verbose mode (-v) for detailed processing information
-    - Output includes both geographic and schematic maps
-    - Generated maps preserve the organic flow of transit routes while
-      maintaining readability, much like patterns in traditional weaving
+    - Output includes both geographic and schematic SVG maps
 
-For more information and documentation:
     https://github.com/pvnkmrksk/magga
 EOF
     exit 1

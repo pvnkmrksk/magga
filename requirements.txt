@@ -1,0 +1,8 @@
+pandas
+partridge
+folium
+branca
+matplotlib
+numpy
+natsort
+tqdm

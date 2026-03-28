@@ -1,44 +1,10 @@
 #!/usr/bin/env python3
 
 """
-GTFS Analysis Tool
-================
+GTFS Analysis - Analyze, filter, and subset GTFS transit data.
 
-Part of the Magga (ಮಗ್ಗ) project - A transit map generation toolkit.
-"Magga" means loom in Kannada, reflecting the weaving of intricate patterns,
-much like the organic patterns of transit routes in a city.
-
-A comprehensive tool for analyzing GTFS data, providing metrics and insights
-about transit networks. Supports data subsetting and route coloring.
-
-For more information, visit: https://github.com/pvnkmrksk/magga
-
-MIT License
-
-Copyright (c) 2024 Pavan Kumar (@pvnkmrksk)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-This work builds upon the LOOM project (https://github.com/ad-freiburg/loom)
-and is distributed under compatible terms.
-
-Author: ಪವನ ಕುಮಾರ ​| Pavan Kumar, PhD (@pvnkmrksk)
+Part of the Magga (ಮಗ್ಗ/मग्ग) project: https://github.com/pvnkmrksk/magga
+License: GPL-3.0 — see LICENSE file. Author: Pavan Kumar (@pvnkmrksk)
 """
 
 import partridge as ptg
@@ -293,8 +259,8 @@ class GTFSAnalyzer:
         import numpy as np
         
         # Get route names and IDs as numpy arrays
-        route_names = routes_df['route_short_name'].fillna('').values
-        route_ids = routes_df['route_id'].values
+        route_names = routes_df['route_short_name'].fillna('').to_numpy()
+        route_ids = routes_df['route_id'].to_numpy()
         
         # Create sorted indices using natsort
         sorted_idx = np.array(natsort.index_natsorted(route_names))

@@ -1,50 +1,10 @@
 #!/usr/bin/env python3
 
 """
-GTFS Map Viewer
-==============
+GTFS Map Viewer - Interactive HTML map visualization for GTFS transit data.
 
-Part of the Magga (ಮಗ್ಗ/मग्ग) project - A transit map generation toolkit.
-
-"Magga" carries dual meaning - a loom (ಮಗ್ಗ) in Kannada that weaves intricate
-patterns, and "path" (मग्ग) in Pali Buddhism, referring to the noble path to
-enlightenment. Much like how a loom weaves threads into beautiful patterns,
-public transit weaves paths through our cities. And just as the Noble Eightfold
-Path guides beings toward enlightenment, accessible public transit guides
-communities toward sustainability and equity - reducing emissions, connecting
-people to opportunities, and weaving the fabric of more livable cities.
-
-An interactive map visualization tool for GTFS data, providing customizable
-views of transit networks with route and stop information.
-
-For more information, visit: https://github.com/pvnkmrksk/magga
-
-MIT License
-
-Copyright (c) 2024 Pavan Kumar (@pvnkmrksk)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-This work builds upon the LOOM project (https://github.com/ad-freiburg/loom)
-and is distributed under compatible terms.
-
-Author: ಪವನ ಕುಮಾರ ​| Pavan Kumar, PhD (@pvnkmrksk)
+Part of the Magga (ಮಗ್ಗ/मग्ग) project: https://github.com/pvnkmrksk/magga
+License: GPL-3.0 — see LICENSE file. Author: Pavan Kumar (@pvnkmrksk)
 """
 
 import pandas as pd
@@ -303,22 +263,13 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(
         description='''
-Magga (ಮಗ್ಗ/मग्ग) Map Viewer
-==========================
-
-Drawing inspiration from both the Kannada word for loom (ಮಗ್ಗ) and the Pali word
-for path (मग्ग), this tool weaves transit data into interactive, explorable maps
-that illuminate the paths toward sustainable and equitable mobility.
+Magga Map Viewer — Generate interactive HTML maps from GTFS data.
 
 Features:
-- Route visualization with frequency-based styling
-- Stop visualization with customizable metrics
-- Interactive popups with detailed information
-- Multiple color scheme options
-- Organic representation of transit patterns
-
-Part of the Magga transit map toolkit, which transforms GTFS data into
-beautiful, readable transit maps while preserving the natural flow of routes.
+  - Route visualization with frequency-based styling
+  - Stop visualization sized/colored by trip or route count
+  - Interactive popups with stop details
+  - Configurable colormaps (any matplotlib colormap)
 ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )

@@ -26,6 +26,7 @@ compile_commands.json
 *.json
 *.csv
 *.txt
+!requirements.txt
 *.DS_Store
 *.pdf
 *.png
