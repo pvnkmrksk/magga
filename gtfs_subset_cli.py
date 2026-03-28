@@ -107,8 +107,8 @@ def create_subset(input_gtfs: str, *,
         )
         print(f"Map created at: {map_path}", file=sys.stderr)
     
-    # Print the output path as the last line
-    print(output, file=sys.stderr)
+    # Print the output path to stdout (used by process_transit_map.sh)
+    print(output)
     return Path(output)
 
 def main():

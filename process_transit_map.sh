@@ -128,6 +128,7 @@ Examples:
     $(basename "$0") input.zip -s "stop1,stop2" -r "138*" -m 10 -o maps/
 
 Notes:
+    - C++ tools must be in PATH: export PATH=/path/to/magga/build:\$PATH
     - Route patterns support wildcards (e.g., "138*" matches "138A", "138B")
     - Text shrink ratio should be between 0 and 1
     - Use verbose mode (-v) for detailed processing information
@@ -257,7 +258,8 @@ fi
 
 log_section "Processing GTFS"
 log_cmd "$SUBSET_CMD"
-if ! SUBSET_GTFS=$(eval "$SUBSET_CMD" 2>&1 | tail -n 1); then
+# Capture stdout (the output path) while letting stderr (stats) flow through
+if ! SUBSET_GTFS=$(eval "$SUBSET_CMD"); then
     log_error "Failed to create GTFS subset"
     exit 1
 fi
