@@ -32,6 +32,16 @@ gtfs2graph -m bus subset.zip | topo --smooth 20 -d 150 | loom | transitmap -l > 
 
 # Shrink text in a generated SVG to 85% size
 python adjust_svg.py input.svg output.svg 0.85
+
+# Generate maps for top 10 stops with progressive hiding + backdrop
+python generate_all_stops.py data.zip -n 10 --progressive --backdrop
+
+# Generate maps for specific stops, geographic only
+python generate_all_stops.py data.zip --stops "STOP1,STOP2" --geographic-only
+
+# Save default style config for customization
+python generate_all_stops.py data.zip -n 1 --save-style -o output/
+# Then edit output/_style.json and re-run with: --style output/_style.json
 ```
 
 ## Installation
@@ -118,6 +128,56 @@ output/
 ├── <name>_loom.json              # Intermediate graph data
 ├── <name>_geographic.svg         # Geographic layout map
 └── <name>_schematic.svg          # Schematic (octilinear) map
+```
+
+### generate_all_stops.py — Batch Per-Stop Map Generation
+
+Generate geographic and/or schematic SVGs for every stop (or top N) with:
+- Semantic SVG layers (Inkscape-compatible: Routes, Stations, Labels by tier)
+- Progressive label hiding variants (full / important / junctions / minimal)
+- Optional HF corridor backdrop for city-wide context
+- Configurable style via JSON
+
+```
+Usage: python generate_all_stops.py <gtfs_file> [options]
+
+  -o, --output-dir <path>      Output directory (default: stop_maps)
+  -n, --top-n <num>            Only top N stops by importance
+  --stops <ids>                Specific stop IDs to process
+  -m, --min-trips <num>        Min trips for route inclusion (default: 5)
+  --backdrop                   Include HF corridor backdrop layer
+  --progressive                Generate progressive hiding variants
+  --geographic-only            Skip schematic maps
+  --schematic-only             Skip geographic maps
+  --style <json>               Style config file
+  --save-style                 Save effective style to output dir
+```
+
+**Examples:**
+```bash
+# Top 5 stops with all features
+python generate_all_stops.py city.zip -n 5 --progressive --backdrop
+
+# Specific stops, geographic only, custom style
+python generate_all_stops.py city.zip --stops "MAIN,CENTRAL" --geographic-only --style style.json
+```
+
+**Output structure:**
+```
+stop_maps/
+├── _style.json                    # Style config used
+├── _stop_importance.csv           # All stops ranked by importance
+├── _hf_corridor_geographic.svg    # Shared HF backdrop (if --backdrop)
+├── STOP1_name/
+│   ├── geographic.svg             # Full labels, layered
+│   ├── geographic_important.svg   # Only important stop labels
+│   ├── geographic_junctions.svg   # Only junction labels
+│   ├── geographic_minimal.svg     # No labels
+│   ├── geographic_with_backdrop.svg
+│   ├── schematic.svg
+│   ├── schematic_*.svg            # Same variants
+│   ├── stop_info.json             # Metadata
+│   └── subset.zip                 # GTFS subset used
 ```
 
 ### gtfs_subset_cli.py — GTFS Filtering
@@ -227,6 +287,10 @@ These are batch-processing utilities for specific workflows:
 magga/
 ├── process_transit_map.sh      # Main pipeline script
 ├── gtfs_subset_cli.py          # GTFS filtering CLI
+├── generate_all_stops.py        # Batch per-stop map generation
+├── magga_style.py              # Style configuration (colormaps, fonts, tiers)
+├── stop_importance.py          # Stop scoring & distance computation
+├── svg_layers.py               # SVG layer post-processor
 ├── gtfs_map_viewer.py          # Interactive HTML map generator
 ├── gtfs_analysis.py            # GTFS analysis library
 ├── adjust_svg.py               # SVG text size adjuster
