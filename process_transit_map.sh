@@ -1,4 +1,5 @@
 #!/bin/bash
+set -o pipefail
 
 # process_transit_map.sh - Automated GTFS to transit map pipeline
 # Part of Magga (ಮಗ್ಗ/मग्ग): https://github.com/pvnkmrksk/magga
@@ -95,6 +96,8 @@ Options:
   Data Filtering:
     -s, --stops <ids>          Comma-separated stop IDs to include
     -r, --routes <patterns>    Route patterns to match (supports wildcards)
+    --route-ids <ids>          Comma-separated GTFS route_id values (exact)
+    -n, --top-routes <num>     Keep the N busiest routes by scheduled trips (uses magga_cli)
     -m, --min-trips <num>      Minimum trips per route (default: 15)
     -d, --max-dist <meters>    Maximum aggregation distance (default: 150)
     -sm, --smooth <value>      Smoothing factor (default: 20)
@@ -114,6 +117,10 @@ Options:
     -o, --output-dir <path>    Output directory (default: output)
     -v, --verbose             Enable detailed logging
 
+  Loom (line arrangement):
+    -lt, --loom-time-limit <s> Seconds for loom ILP (--ilp-time-limit). Omit for
+                              unbounded (can take a very long time on large feeds).
+
 Examples:
     # Basic usage with default settings
     $(basename "$0") input.zip
@@ -127,12 +134,23 @@ Examples:
     # Complex filtering with custom output
     $(basename "$0") input.zip -s "stop1,stop2" -r "138*" -m 10 -o maps/
 
+    # Top 100 routes by trip count → geographic + schematic SVG (English feed)
+    $(basename "$0") bmtc-2.zip -n 100 -m 1 -o output/top100_en -lt 600
+
+    # Same route set, Kannada stop names (use a KN-translated GTFS zip)
+    $(basename "$0") bmtc-2-kn.zip -n 100 -m 1 -o output/top100_kn -lt 600
+
 Notes:
     - C++ tools must be in PATH: export PATH=/path/to/magga/build:\$PATH
     - Route patterns support wildcards (e.g., "138*" matches "138A", "138B")
     - Text shrink ratio should be between 0 and 1
     - Use verbose mode (-v) for detailed processing information
     - Output includes both geographic and schematic SVG maps
+    - If loom seems stuck: it uses combinatorial + ILP optimization with no time
+      limit by default; use -lt 600 or filter to a smaller GTFS subset
+    - Python: subset step uses \$MAGGA_PYTHON if set, else python3 (needs partridge).
+      Example: export MAGGA_PYTHON=\$PWD/.venv/bin/python
+    - Kannada/Indic labels: final SVGs get a Noto-first font fix for station names.
 
     https://github.com/pvnkmrksk/magga
 EOF
@@ -147,6 +165,8 @@ fi
 # Default values
 STOPS=""
 ROUTES=""
+ROUTE_IDS=""
+TOP_ROUTES=""
 MIN_TRIPS=15
 MAX_AGGR_DIST=150
 SMOOTHING=20
@@ -159,6 +179,7 @@ LINE_LABEL_SIZE=40
 PADDING=-1
 TEXT_SHRINK=0.85
 DEBUG=false
+LOOM_TIME_LIMIT=""
 
 # Parse command line arguments
 POSITIONAL_ARGS=()
@@ -170,6 +191,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --routes|-r)
             ROUTES="$2"
+            shift 2
+            ;;
+        --route-ids)
+            ROUTE_IDS="$2"
+            shift 2
+            ;;
+        --top-routes|-n)
+            TOP_ROUTES="$2"
             shift 2
             ;;
         --min-trips|-m)
@@ -220,6 +249,10 @@ while [[ $# -gt 0 ]]; do
             DEBUG=true
             shift
             ;;
+        --loom-time-limit|-lt)
+            LOOM_TIME_LIMIT="$2"
+            shift 2
+            ;;
         *)
             POSITIONAL_ARGS+=("$1")
             shift
@@ -237,11 +270,33 @@ fi
 
 GTFS_FILE=$1
 
+if [ -n "$TOP_ROUTES" ] && [ -n "$ROUTE_IDS" ]; then
+    log_error "Use only one of --top-routes (-n) and --route-ids"
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_CMD="${MAGGA_PYTHON:-python3}"
+
+LOOM_EXTRA_ARGS=""
+if [ -n "$LOOM_TIME_LIMIT" ]; then
+    LOOM_EXTRA_ARGS="--ilp-time-limit $LOOM_TIME_LIMIT"
+fi
+
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
+# Resolve --top-routes → comma-separated route_id list (stdout only from magga_cli)
+if [ -n "$TOP_ROUTES" ]; then
+    if ! ROUTE_IDS=$("$PYTHON_CMD" "$SCRIPT_DIR/magga_cli.py" "$GTFS_FILE" --print-top-route-ids "$TOP_ROUTES"); then
+        log_error "magga_cli.py --print-top-route-ids failed (need partridge / valid GTFS)"
+        exit 1
+    fi
+    log_info "Selected top $TOP_ROUTES routes by trip count"
+fi
+
 # Run gtfs_subset_cli.py and capture its output (which is the generated filename)
-SUBSET_CMD="python gtfs_subset_cli.py $GTFS_FILE"
+SUBSET_CMD="\"$PYTHON_CMD\" \"$SCRIPT_DIR/gtfs_subset_cli.py\" \"$GTFS_FILE\""
 if [ ! -z "$STOPS" ]; then
     # Remove all spaces from the stops list
     STOPS=$(echo "$STOPS" | tr -d ' ')
@@ -251,6 +306,10 @@ if [ ! -z "$ROUTES" ]; then
     # Remove all spaces from the routes list
     ROUTES=$(echo "$ROUTES" | tr -d ' ')
     SUBSET_CMD="$SUBSET_CMD --routes $ROUTES"
+fi
+if [ ! -z "$ROUTE_IDS" ]; then
+    ROUTE_IDS=$(echo "$ROUTE_IDS" | tr -d ' ')
+    SUBSET_CMD="$SUBSET_CMD --route-ids $ROUTE_IDS"
 fi
 if [ ! -z "$MIN_TRIPS" ]; then
     SUBSET_CMD="$SUBSET_CMD --min-trips $MIN_TRIPS"
@@ -293,9 +352,17 @@ COMMON_PARAMS="--line-width $LINE_WIDTH \
 # Run common pipeline once and save intermediate result
 log_section "Generating Maps"
 LOOM_JSON="$OUTPUT_DIR/${BASENAME}_loom.json"
-PIPELINE_CMD="gtfs2graph -m bus $SUBSET_GTFS | topo --smooth $SMOOTHING -d $MAX_AGGR_DIST | loom  > $LOOM_JSON"
+PIPELINE_CMD="gtfs2graph -m bus $SUBSET_GTFS | topo --smooth $SMOOTHING -d $MAX_AGGR_DIST | loom $LOOM_EXTRA_ARGS > $LOOM_JSON"
 log_cmd "$PIPELINE_CMD"
-eval "$PIPELINE_CMD"
+if ! eval "$PIPELINE_CMD"; then
+    log_error "gtfs2graph/topo/loom pipeline failed"
+    exit 1
+fi
+
+if [ ! -s "$LOOM_JSON" ]; then
+    log_error "loom wrote no JSON (empty or missing: $LOOM_JSON). If loom was interrupted, re-run; if it ran for a long time, the graph may be too large — try -lt <seconds>, tighter -s/-r filters, or higher -m."
+    exit 1
+fi
 
 # Save a debug copy of the loom JSON
 cp "$LOOM_JSON" "debug_loom.json"
@@ -307,13 +374,19 @@ log_info "Debug copy: debug_loom.json"
 log_info "Generating geographic map"
 GEOGRAPHIC_CMD="cat $LOOM_JSON | transitmap $COMMON_PARAMS > $OUTPUT_DIR/${BASENAME}_geographic.svg"
 log_cmd "$GEOGRAPHIC_CMD"
-eval "$GEOGRAPHIC_CMD"
+if ! eval "$GEOGRAPHIC_CMD"; then
+    log_error "transitmap (geographic) failed"
+    exit 1
+fi
 
 # Generate schematic map from loom output
 log_info "Generating schematic map"
 SCHEMATIC_CMD="cat $LOOM_JSON | octi | transitmap $COMMON_PARAMS > $OUTPUT_DIR/${BASENAME}_schematic.svg"
 log_cmd "$SCHEMATIC_CMD"
-eval "$SCHEMATIC_CMD"
+if ! eval "$SCHEMATIC_CMD"; then
+    log_error "octi/transitmap (schematic) failed"
+    exit 1
+fi
 
 # Create adjusted SVG files with shrunk text
 log_section "Post-Processing"
@@ -321,9 +394,9 @@ log_info "Adjusting text sizes"
 GEOGRAPHIC_ADJUSTED="${OUTPUT_DIR}/${BASENAME}_geographic_adjusted.svg"
 SCHEMATIC_ADJUSTED="${OUTPUT_DIR}/${BASENAME}_schematic_adjusted.svg"
 
-python3 adjust_svg.py "$OUTPUT_DIR/${BASENAME}_geographic.svg" "$GEOGRAPHIC_ADJUSTED" "$TEXT_SHRINK"
+"$PYTHON_CMD" "$SCRIPT_DIR/adjust_svg.py" "$OUTPUT_DIR/${BASENAME}_geographic.svg" "$GEOGRAPHIC_ADJUSTED" "$TEXT_SHRINK"
 log_info "Created: ${BASENAME}_geographic_adjusted.svg"
-python3 adjust_svg.py "$OUTPUT_DIR/${BASENAME}_schematic.svg" "$SCHEMATIC_ADJUSTED" "$TEXT_SHRINK"
+"$PYTHON_CMD" "$SCRIPT_DIR/adjust_svg.py" "$OUTPUT_DIR/${BASENAME}_schematic.svg" "$SCHEMATIC_ADJUSTED" "$TEXT_SHRINK"
 log_info "Created: ${BASENAME}_schematic_adjusted.svg"
 
 # Clean up unadjusted SVGs unless in verbose mode
@@ -333,6 +406,17 @@ if [ "$DEBUG" = false ]; then
     # Rename adjusted files to be the main files
     mv "$GEOGRAPHIC_ADJUSTED" "$OUTPUT_DIR/${BASENAME}_geographic.svg"
     mv "$SCHEMATIC_ADJUSTED" "$OUTPUT_DIR/${BASENAME}_schematic.svg"
+fi
+
+# Kannada/Indic: station labels must use Noto Sans Kannada first (Ubuntu Condensed breaks conjuncts)
+if [ -f "$SCRIPT_DIR/svg_indic_font_fallback.py" ]; then
+    log_info "Applying Indic-friendly font stack (station labels)"
+    if ! "$PYTHON_CMD" "$SCRIPT_DIR/svg_indic_font_fallback.py" \
+        "$OUTPUT_DIR/${BASENAME}_geographic.svg" \
+        "$OUTPUT_DIR/${BASENAME}_schematic.svg"; then
+        log_error "svg_indic_font_fallback.py failed"
+        exit 1
+    fi
 fi
 
 # Print final output tree

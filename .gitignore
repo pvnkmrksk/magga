@@ -9,6 +9,7 @@ CMakeFiles
 *.cfg
 *.cmake
 /build/
+.venv-kn-demo/
 *.pyc
 compile_commands.json
 .vimrc

@@ -111,6 +111,7 @@ class GTFSAnalyzer:
                      output_path: str,
                      stop_ids: List[str] = None,
                      route_patterns: List[str] = None,
+                     route_ids: List[str] = None,
                      min_trips: int = None) -> 'GTFSAnalyzer':
         """
         Create a GTFS subset by chaining multiple filters.
@@ -125,13 +126,36 @@ class GTFSAnalyzer:
         route_patterns : List[str], optional
             List of route patterns (supports wildcards like "138*"). Only stops served by 
             these routes will be included.
+        route_ids : List[str], optional
+            Exact ``route_id`` values (union with patterns/stops). Use for ranked subsets
+            when ``route_short_name`` is not unique.
         min_trips : int, optional
             Minimum number of trips a route must have to be included
         """
         qualifying_trips = set()
         stops_to_keep = set()
+
+        restricted = bool(
+            (route_patterns and len(route_patterns) > 0)
+            or (stop_ids and len(stop_ids) > 0)
+            or (route_ids and len(route_ids) > 0)
+        )
+
+        # Explicit route IDs (e.g. top-N by trip count from network_stats)
+        if route_ids and len(route_ids) > 0:
+            rset = set(route_ids)
+            sub_trip_ids = self.feed.trips.loc[
+                self.feed.trips["route_id"].isin(rset), "trip_id"
+            ]
+            qualifying_trips.update(sub_trip_ids)
+            if not stop_ids:
+                stops_to_keep.update(
+                    self.feed.stop_times.loc[
+                        self.feed.stop_times["trip_id"].isin(sub_trip_ids), "stop_id"
+                    ]
+                )
         
-        # First handle route patterns if specified
+        # Route short-name patterns if specified
         if route_patterns and len(route_patterns) > 0:
             for pattern in route_patterns:
                 if '*' in pattern:
@@ -178,8 +202,12 @@ class GTFSAnalyzer:
                 ]['stop_id']
             )
         
-        # If neither stops nor routes specified, use all trips and stops
+        # If no restriction was requested, use all trips and stops
         if not qualifying_trips:
+            if restricted:
+                raise ValueError(
+                    "No trips matched the given route_id / route pattern / stop filters."
+                )
             qualifying_trips = set(self.feed.trips['trip_id'])
             stops_to_keep = set(self.feed.stops['stop_id'])
         

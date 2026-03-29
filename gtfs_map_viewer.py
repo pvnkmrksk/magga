@@ -9,15 +9,84 @@ License: GPL-3.0 — see LICENSE file. Author: Pavan Kumar (@pvnkmrksk)
 
 import pandas as pd
 import folium
+from html import escape
 from pathlib import Path
 import zipfile
 import tempfile
 import os
 import sys
+from typing import Dict, Optional
+
 from branca.colormap import LinearColormap
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, to_hex
+
+
+def build_route_bilingual_popup_html(
+    routes_df: pd.DataFrame,
+    kn_by_route_id: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """
+    Folium popup HTML per ``route_id``: English from GTFS, optional Kannada below.
+
+    ``kn_by_route_id`` maps ``route_id`` (str) to Kannada (or other) label text.
+    """
+    kn_by_route_id = kn_by_route_id or {}
+    out: Dict[str, str] = {}
+    for _, row in routes_df.iterrows():
+        rid = str(row["route_id"])
+        parts = []
+        short = row.get("route_short_name")
+        if pd.notna(short) and str(short).strip():
+            parts.append(f"<b>{escape(str(short))}</b>")
+        longn = row.get("route_long_name")
+        if pd.notna(longn) and str(longn).strip():
+            parts.append(f"<small>{escape(str(longn))}</small>")
+        en_block = "<br>".join(parts) if parts else f"<code>{escape(rid)}</code>"
+        kn = kn_by_route_id.get(rid)
+        if kn:
+            en_block += (
+                '<hr style="margin:6px 0"/>'
+                '<div style="font-family:Noto Sans Kannada,Noto Sans,DejaVu Sans,sans-serif;'
+                'font-size:14px;line-height:1.35">'
+                f"{escape(kn)}</div>"
+            )
+        out[rid] = f'<div style="font-family:sans-serif">{en_block}</div>'
+    return out
+
+
+def format_stop_bilingual_popup_html(
+    stop_name: str,
+    stop_id: str,
+    trip_count: int,
+    route_count: int,
+    kn_stop_name: Optional[str] = None,
+) -> str:
+    """Stop marker popup: GTFS name (usually English) plus optional Kannada line."""
+    name_esc = escape(str(stop_name))
+    sid_esc = escape(str(stop_id))
+    kn_block = ""
+    if kn_stop_name:
+        kn_block = (
+            '<hr style="margin:6px 0"/>'
+            '<div style="font-family:Noto Sans Kannada,Noto Sans,DejaVu Sans,sans-serif;'
+            'font-size:14px;line-height:1.35">'
+            f"{escape(kn_stop_name)}</div>"
+        )
+    return (
+        f'<div style="font-family:sans-serif">'
+        f"<strong>{name_esc}</strong><br>"
+        f"<small>ID: {sid_esc}</small><br>"
+        f'<hr style="margin: 5px 0;">'
+        f'<span style="color: #666;">'
+        f"Trips: {int(trip_count)}<br>"
+        f"Routes: {int(route_count)}"
+        f"</span>"
+        f"{kn_block}"
+        f"</div>"
+    )
+
 
 class GTFSMapCreator:
     """
@@ -126,7 +195,11 @@ class GTFSMapCreator:
         }).fillna(0)
 
     def create_map(self, output_path=None, stops_only=False, 
-                  color_by='trips', cmap='magma', route_cmap='magma', **kwargs):
+                  color_by='trips', cmap='magma', route_cmap='magma',
+                  route_line_popup_html: Optional[Dict[str, str]] = None,
+                  kn_by_stop_id: Optional[Dict[str, str]] = None,
+                  map_bilingual_ui: bool = False,
+                  **kwargs):
         """
         Create an interactive map with stops and routes.
         
@@ -136,6 +209,9 @@ class GTFSMapCreator:
             color_by (str): 'trips' or 'routes' - metric to use for coloring stops
             cmap (str): Matplotlib colormap name for stops (e.g., 'magma', 'viridis', 'YlOrRd')
             route_cmap (str): Matplotlib colormap name for routes
+            route_line_popup_html (dict, optional): ``route_id`` str → HTML for route PolyLine popups
+            kn_by_stop_id (dict, optional): ``stop_id`` str → Kannada stop name for popups
+            map_bilingual_ui (bool): If True, layer names and legend use English · Kannada
         
         Example usage:
             creator.create_map(
@@ -146,11 +222,25 @@ class GTFSMapCreator:
             )
         """
         metrics = self.calculate_stop_metrics()
-        
+        if not metrics.index.empty:
+            metrics = metrics.copy()
+            metrics.index = metrics.index.astype(str)
+        kn_by_stop_id = {str(k): v for k, v in (kn_by_stop_id or {}).items()}
+
         if color_by == 'routes':
-            metric_name, legend_name = 'route_count', 'Routes per Stop'
+            metric_name = 'route_count'
+            legend_name = (
+                'Routes per stop · ನಿಲ್ದಾಣಕ್ಕೆ ಮಾರ್ಗಗಳು'
+                if map_bilingual_ui
+                else 'Routes per Stop'
+            )
         else:
-            metric_name, legend_name = 'trip_count', 'Trips per Stop'
+            metric_name = 'trip_count'
+            legend_name = (
+                'Trips per stop · ನಿಲ್ದಾಣಕ್ಕೆ ಪ್ರಯಾಣಗಳು'
+                if map_bilingual_ui
+                else 'Trips per Stop'
+            )
             
         metric_values = metrics[metric_name]
         vmin, vmax = metric_values.min(), metric_values.max()
@@ -174,9 +264,12 @@ class GTFSMapCreator:
             prefer_canvas=True
         )
         
+        routes_layer = 'Routes · ಮಾರ್ಗಗಳು' if map_bilingual_ui else 'Routes'
+        stops_layer = 'Stops · ನಿಲ್ದಾಣಗಳು' if map_bilingual_ui else 'Stops'
+
         # Add routes
         if self.shapes_df is not None and not stops_only:
-            routes_group = folium.FeatureGroup(name='Routes', show=True)
+            routes_group = folium.FeatureGroup(name=routes_layer, show=True)
             route_freqs = self.trips_df['route_id'].value_counts()
             max_freq = route_freqs.max()
             
@@ -200,26 +293,47 @@ class GTFSMapCreator:
                 
                 points = [[row['shape_pt_lat'], row['shape_pt_lon']] 
                          for idx, row in shape_points.iterrows()]
-                
+
+                route_id_str = str(route_id)
+                popup_kw = {}
+                if route_line_popup_html and route_id_str in route_line_popup_html:
+                    popup_kw["popup"] = folium.Popup(
+                        route_line_popup_html[route_id_str],
+                        max_width=320,
+                    )
+
                 folium.PolyLine(
                     points,
                     weight=2 + freq_ratio * 4,
                     color=route_color,
                     opacity=0.7,
-                    smooth_factor=1.5
+                    smooth_factor=1.5,
+                    **popup_kw,
                 ).add_to(routes_group)
             
             routes_group.add_to(m)
         
         # Add stops to the map
-        stops_group = folium.FeatureGroup(name='Stops', show=True)
+        stops_group = folium.FeatureGroup(name=stops_layer, show=True)
         for idx, stop in self.stops_df.iterrows():
-            metric_value = metrics.loc[stop['stop_id'], metric_name] if stop['stop_id'] in metrics.index else 0
+            sid = str(stop["stop_id"])
+            metric_value = metrics.loc[sid, metric_name] if sid in metrics.index else 0
             color = colormap(metric_value)
             
             # Calculate size based on metric (with smaller range)
             size_ratio = metric_value / vmax if vmax > 0 else 0
             radius = 4 + size_ratio * 8  # Smaller size range
+
+            tc = int(metrics.loc[sid, "trip_count"]) if sid in metrics.index else 0
+            rc = int(metrics.loc[sid, "route_count"]) if sid in metrics.index else 0
+            kn_stop = kn_by_stop_id.get(sid)
+            popup_body = format_stop_bilingual_popup_html(
+                str(stop["stop_name"]),
+                sid,
+                tc,
+                rc,
+                kn_stop_name=kn_stop,
+            )
             
             folium.CircleMarker(
                 location=[stop['stop_lat'], stop['stop_lon']],
@@ -228,20 +342,7 @@ class GTFSMapCreator:
                 fill=True,
                 fillOpacity=0.7,
                 weight=1,  # Thinner border
-                popup=folium.Popup(
-                    f"""
-                    <div style="font-family: Arial, sans-serif;">
-                        <strong>{stop['stop_name']}</strong><br>
-                        <small>ID: {stop['stop_id']}</small><br>
-                        <hr style="margin: 5px 0;">
-                        <span style="color: #666;">
-                            Trips: {metrics.loc[stop['stop_id'], 'trip_count'] if stop['stop_id'] in metrics.index else 0}<br>
-                            Routes: {metrics.loc[stop['stop_id'], 'route_count'] if stop['stop_id'] in metrics.index else 0}
-                        </span>
-                    </div>
-                    """,
-                    max_width=200
-                )
+                popup=folium.Popup(popup_body, max_width=280),
             ).add_to(stops_group)
         
         stops_group.add_to(m)

@@ -17,6 +17,7 @@ def create_subset(input_gtfs: str, *,
                  output: str = None,
                  stops: str = None,
                  routes: str = None,
+                 route_ids: str = None,
                  min_trips: int = None,
                  map: bool = False,
                  map_output: str = None,
@@ -36,6 +37,7 @@ def create_subset(input_gtfs: str, *,
         output (str, optional): Output path for the filtered GTFS
         stops (str, optional): Comma-separated stop IDs to include
         routes (str, optional): Route patterns to match (supports wildcards)
+        route_ids (str, optional): Comma-separated ``route_id`` values (exact)
         min_trips (int, optional): Minimum trips per route
         map (bool, optional): Generate HTML map visualization
         map_output (str, optional): Custom path for map output
@@ -58,12 +60,15 @@ def create_subset(input_gtfs: str, *,
     # Parse filters
     stop_ids = [s.strip() for s in stops.split(',')] if stops else None
     route_patterns = [r.strip() for r in routes.split(',')] if routes else None
+    rid_list = [s.strip() for s in route_ids.split(',')] if route_ids else None
     
     # Generate output name if not provided
     if not output:
         filters = []
         if stop_ids:
             filters.append(f"stops_{'-'.join(stop_ids)}")
+        if rid_list:
+            filters.append(f"routeids_{'-'.join(rid_list[:4])}{'_etc' if len(rid_list) > 4 else ''}")
         if route_patterns:
             filters.append(f"routes_{'-'.join(route_patterns)}")
         if min_trips:
@@ -80,6 +85,7 @@ def create_subset(input_gtfs: str, *,
         output_path=output,
         stop_ids=stop_ids,
         route_patterns=route_patterns,
+        route_ids=rid_list,
         min_trips=min_trips
     )
     
@@ -132,6 +138,8 @@ trip counts. Optionally generate interactive HTML map visualizations.
                             help='Comma-separated stop IDs to include')
     filter_group.add_argument('-r', '--routes',
                             help='Route patterns to match (supports wildcards)')
+    filter_group.add_argument('--route-ids',
+                            help='Comma-separated route_id values (exact GTFS ids)')
     filter_group.add_argument('-m', '--min-trips',
                             type=int,
                             help='Minimum trips per route')
@@ -179,6 +187,7 @@ examples:
 
   # Complex filtering with visualization
   %(prog)s input.zip -s "STOP1,STOP2" -r "138*" -m 10 --map
+  %(prog)s input.zip --route-ids "24o,1jx" -o corridor.zip
 
 notes:
   - Route patterns support wildcards (e.g., "138*" matches "138A", "138B")

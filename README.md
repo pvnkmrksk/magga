@@ -6,42 +6,61 @@ A toolkit for weaving transit data into beautiful, meaningful maps.
 
 "Magga" carries dual meaning — a loom (ಮಗ್ಗ) in Kannada that weaves intricate patterns, and "path" (मग्ग) in Pali, referring to the noble path toward enlightenment. We weave transit routes into readable maps, illuminating paths toward sustainable and equitable mobility.
 
-## Quick Reference
+## Command layers
+
+Work from the top when you can; drop down only when you need a narrow knob or a debugger’s view.
+
+| Layer | Tool | Role |
+|-------|------|------|
+| **1** | `magga_cli.py` | **One-stop shop:** stop/route rankings (CSV), top-*N* or top-*%* route subsets, trip-frequency plot. Built on `network_stats` + `GTFSAnalyzer`. |
+| **2** | `process_transit_map.sh` | **SVG transit maps (primary output):** optional filter (`-s`, `-r`, `-m`, **`--route-ids`**, **`--top-routes` / `-n`**) → C++ pipeline → geographic + schematic SVG + Indic font fix. |
+| **3** | Focused Python CLIs | **Specialist / debugging:** subset-only, stats-only, Folium HTML, per-stop batches, translation helpers, manual SVG tweaks. |
+| **4** | C++ tools (`gtfs2graph` …) | **Full control** over each pipeline stage. |
+
+**Typical end-to-end (rank → subset → map):**
 
 ```bash
-# End-to-end: GTFS zip → geographic + schematic SVG maps
+# 1) Stats + plot + top-50 routes subset (Layer 1)
+python magga_cli.py city.zip \
+  --stats-dir output/network_stats \
+  --plot-top-routes 50 --plot-output output/routes_top50.png \
+  --subset-top-routes 50 --subset-output output/top50.zip --subset-min-trips 1
+
+# 2) Geographic + schematic SVGs from that subset (Layer 2)
+./process_transit_map.sh output/top50.zip -m 1 -lt 600 -o output/maps_top50
+
+# Or skip the intermediate zip: top 50 routes by trips, straight to SVG (same pipeline)
+./process_transit_map.sh city.zip -n 50 -m 1 -lt 600 -o output/maps_top50_direct
+```
+
+**Other Layer 1 examples:**
+
+```bash
+# Top 10% of routes by scheduled trip count (HFR-style cut)
+python magga_cli.py city.zip \
+  --subset-top-routes-pct 10 --subset-output output/top10pct.zip --subset-min-trips 1
+
+# Stats + chart only (no new zip)
+python magga_cli.py city.zip --stats-dir output/stats --plot-top-routes 50
+```
+
+**Layer 2 shortcuts:**
+
+```bash
 ./process_transit_map.sh data.zip
+./process_transit_map.sh data.zip -s "STOP1,STOP2" -r "138*" -m 10 -lt 600 -o maps/
+# Top 100 routes (English labels) vs Kannada stop names: run twice on en vs kn GTFS zips
+./process_transit_map.sh city.zip -n 100 -m 1 -lt 600 -o output/svg_top100_en
+./process_transit_map.sh city-kn.zip -n 100 -m 1 -lt 600 -o output/svg_top100_kn
+```
 
-# Filter to specific stops and routes
-./process_transit_map.sh data.zip -s "STOP1,STOP2" -r "138*" -m 10
+Use `export MAGGA_PYTHON=/path/to/venv/bin/python` if `python3` lacks `partridge`. See `process_transit_map.sh -h` for `-lt` (loom time limit) and styling flags.
 
-# Interactive HTML map of a GTFS file
-python gtfs_map_viewer.py data.zip -o map.html
+**Tests:**
 
-# Create a filtered GTFS subset
-python gtfs_subset_cli.py data.zip -s "STOP1,STOP2" -m 15 -o subset.zip
-
-# Create subset + generate interactive map in one step
-python gtfs_subset_cli.py data.zip -r "138*" -m 10 --map
-
-# Manual pipeline: GTFS → graph → topo → loom → schematic SVG
-gtfs2graph -m bus subset.zip | topo --smooth 20 -d 150 | loom | octi | transitmap -l > map.svg
-
-# Geographic map (skip octi for non-schematic layout)
-gtfs2graph -m bus subset.zip | topo --smooth 20 -d 150 | loom | transitmap -l > geo.svg
-
-# Shrink text in a generated SVG to 85% size
-python adjust_svg.py input.svg output.svg 0.85
-
-# Generate maps for top 10 stops with progressive hiding + backdrop
-python generate_all_stops.py data.zip -n 10 --progressive --backdrop
-
-# Generate maps for specific stops, geographic only
-python generate_all_stops.py data.zip --stops "STOP1,STOP2" --geographic-only
-
-# Save default style config for customization
-python generate_all_stops.py data.zip -n 1 --save-style -o output/
-# Then edit output/_style.json and re-run with: --style output/_style.json
+```bash
+pip install -r requirements.txt   # includes pytest
+python -m pytest tests/ -q
 ```
 
 ## Installation
@@ -72,7 +91,7 @@ sudo make install
 pip install -r requirements.txt
 ```
 
-Required packages: pandas, partridge, folium, branca, matplotlib, numpy, natsort, tqdm.
+Required packages: pandas, partridge, folium, branca, matplotlib, plotly, numpy, natsort, tqdm, pytest (for `tests/`).
 
 ### GTFS Data
 
@@ -83,7 +102,46 @@ You need GTFS (General Transit Feed Specification) zip files as input. Download 
 
 ## Tools
 
-### process_transit_map.sh — Full Pipeline
+The sections below are **Layer 2–3** references: use them when you need one tool in isolation, exact flags, or to debug. For the usual “analyze network → subset → map” flow, start with [**Command layers**](#command-layers) and `magga_cli.py`.
+
+### magga_cli.py — Unified stats, plots, and route subsets (Layer 1)
+
+Wraps `network_stats` and `GTFSAnalyzer.create_subset` (including exact `route_id` lists for top-*N* / top-*%* routes).
+
+```bash
+python magga_cli.py --help
+python magga_cli.py city.zip --stats-dir stats --plot-top-routes 50 \
+  --subset-top-routes 50 --subset-output top50.zip --subset-min-trips 1
+
+# Interactive HTML + matching matplotlib PNG (…_static.png next to the HTML by default)
+python magga_cli.py city.zip --plotly-html output/routes_plotly.html --plotly-top-routes 100
+
+# Kannada (or other) route names on bar charts: JSON next to the zip, or --route-labels-json PATH
+# File shape: {"<route_id>": "ಕನ್ನಡ ಹೆಸರು"} or {"<route_id>": {"kn": "…", "en": "…"}}
+python magga_cli.py city.zip --plotly-html out/r.html --kannada
+python magga_cli.py city.zip --plot-top-routes 50 --kannada
+
+# Interactive map: top 100 routes; route + stop popups = GTFS (English) + Kannada when JSON exists
+#   <zip_stem>_route_labels_kn.json  (route_id keys)  and/or  <zip_stem>_stop_labels_kn.json  (stop_id keys)
+python magga_cli.py city.zip --map-html out/top100.html --map-top-routes 100 --kannada
+
+# One pass — stats CSVs, Plotly + static PNG, top-100 bar chart, bilingual Folium map (same JSON files as above)
+python magga_cli.py city.zip --kannada \
+  --stats-dir output/network_stats \
+  --plotly-html output/network_stats/routes_trip_plotly.html \
+  --plot-top-routes 100 --plot-output output/network_stats/top100_routes.png \
+  --map-html output/network_stats/top100_routes_map.html --map-top-routes 100
+```
+
+### export_gtfs_network_stats.py — CSV-only network tables (Layer 3)
+
+Same ranking CSVs as `magga_cli.py --stats-dir`, without plots or subsets. Useful in scripts.
+
+```bash
+python export_gtfs_network_stats.py city.zip -o output/network_stats --print-top-routes 10
+```
+
+### process_transit_map.sh — Full Pipeline (Layer 2)
 
 Automates the entire flow: GTFS filtering → graph conversion → layout → SVG rendering → text adjustment.
 
@@ -93,6 +151,8 @@ Usage: ./process_transit_map.sh <gtfs_file> [options]
 Data Filtering:
   -s, --stops <ids>           Comma-separated stop IDs to include
   -r, --routes <patterns>     Route patterns (supports wildcards, e.g. "138*")
+  --route-ids <ids>           Comma-separated GTFS route_id (exact); or use -n instead
+  -n, --top-routes <num>      N busiest routes by scheduled trips (`magga_cli.py --print-top-route-ids`)
   -m, --min-trips <num>       Minimum trips per route (default: 15)
   -d, --max-dist <meters>     Max aggregation distance (default: 150)
   -sm, --smooth <value>       Smoothing factor (default: 20)
@@ -119,6 +179,9 @@ Output:
 
 # Wildcard route filtering with lower trip threshold
 ./process_transit_map.sh city_transit.zip -r "138*,KBS*" -m 5 -o maps/
+
+# Top 100 routes → SVG (requires C++ tools in PATH; -lt caps loom runtime)
+./process_transit_map.sh city_transit.zip -n 100 -m 1 -lt 600 -o output/top100_svg
 ```
 
 **Output:**
@@ -130,7 +193,7 @@ output/
 └── <name>_schematic.svg          # Schematic (octilinear) map
 ```
 
-### generate_all_stops.py — Batch Per-Stop Map Generation
+### generate_all_stops.py — Batch Per-Stop Map Generation (Layer 3)
 
 Generate geographic and/or schematic SVGs for every stop (or top N) with:
 - Semantic SVG layers (Inkscape-compatible: Routes, Stations, Labels by tier)
@@ -180,9 +243,9 @@ stop_maps/
 │   └── subset.zip                 # GTFS subset used
 ```
 
-### gtfs_subset_cli.py — GTFS Filtering
+### gtfs_subset_cli.py — GTFS Filtering (Layer 3)
 
-Create filtered subsets of GTFS data, optionally with an interactive HTML map.
+Create filtered subsets of GTFS data, optionally with an interactive HTML map. `process_transit_map.sh` calls this for `-s` / `-r` / `-m`; use the CLI directly for `--map`, `--route-ids`, or odd filenames.
 
 ```
 Usage: python gtfs_subset_cli.py <input.zip> [options]
@@ -190,6 +253,7 @@ Usage: python gtfs_subset_cli.py <input.zip> [options]
   -o, --output <path>         Output GTFS path (auto-generated if omitted)
   -s, --stops <ids>           Comma-separated stop IDs
   -r, --routes <patterns>     Route patterns (wildcards supported)
+  --route-ids <ids>           Comma-separated route_id values (exact)
   -m, --min-trips <num>       Minimum trips per route
   --map                       Generate interactive HTML map
   --map-output <path>         Custom map output path
@@ -206,11 +270,14 @@ python gtfs_subset_cli.py city.zip -s "MAIN_ST,CENTRAL" --map
 # Routes matching a pattern, min 10 trips
 python gtfs_subset_cli.py city.zip -r "138*,KBS*" -m 10 -o filtered.zip
 
+# Exact route_id list (from routes_trip_frequency.csv, etc.)
+python gtfs_subset_cli.py city.zip --route-ids "24o,1jx" -o corridor.zip
+
 # Custom visualization
 python gtfs_subset_cli.py city.zip --map --color-by routes --cmap viridis
 ```
 
-### gtfs_map_viewer.py — Interactive HTML Maps
+### gtfs_map_viewer.py — Interactive HTML Maps (Layer 3)
 
 Generates an interactive web map from a GTFS file with routes and stops.
 
@@ -231,7 +298,7 @@ python gtfs_map_viewer.py city.zip --color-by routes --cmap YlOrRd
 python gtfs_map_viewer.py city.zip --stops-only --cmap viridis
 ```
 
-### adjust_svg.py — SVG Text Adjustment
+### adjust_svg.py — SVG Text Adjustment (Layer 3)
 
 Scales text sizes in generated SVG maps for better readability.
 
@@ -241,7 +308,12 @@ Usage: python adjust_svg.py <input_svg> <output_svg> <scale_factor>
   scale_factor: e.g. 0.85 to shrink text to 85%, 1.2 to enlarge to 120%
 ```
 
-### Manual Pipeline
+### Kannada / Indic labels (Layer 3)
+
+- `translate_gtfs_stops.py` — translate `stops.txt` names inside a GTFS zip (optional `deep-translator`).
+- `svg_indic_font_fallback.py` — after `process_transit_map.sh`, ensures station labels use **Noto Sans Kannada first** (Ubuntu-first stacks break conjunct shaping). The shell script runs this automatically on final SVGs.
+
+### Manual Pipeline (Layer 4)
 
 For fine-grained control, run the C++ tools individually:
 
@@ -272,6 +344,8 @@ These are batch-processing utilities for specific workflows:
 | `process_doublets.sh` | Process doublet stop pairs from CSV | `Doublet_stops.csv` |
 | `process_doublet_stops.py` | Python version of doublet processing | `Doublet_stops.csv` |
 | `process_top_stops.py` | Batch analysis of top stops (**experimental**, has known issues) | Hardcoded paths |
+| `magga_cli.py` | Stats + plots + top-route subsets (see [Command layers](#command-layers)) | `matplotlib`, full feed |
+| `translate_gtfs_stops.py` | EN→KN (or other) `stop_name` translation in a zip | `deep-translator` (venv) |
 
 ```bash
 # Parallel processing of multiple GTFS files
@@ -285,16 +359,23 @@ These are batch-processing utilities for specific workflows:
 
 ```
 magga/
-├── process_transit_map.sh      # Main pipeline script
+├── magga_cli.py                # Layer 1: stats + plots + top-route subsets
+├── export_gtfs_network_stats.py # Layer 3: CSV-only network rankings
+├── network_stats.py            # Stop/route ranking helpers (used by magga_cli)
+├── process_transit_map.sh      # Layer 2: GTFS → SVG pipeline
 ├── gtfs_subset_cli.py          # GTFS filtering CLI
-├── generate_all_stops.py        # Batch per-stop map generation
+├── generate_all_stops.py       # Batch per-stop map generation
 ├── magga_style.py              # Style configuration (colormaps, fonts, tiers)
 ├── stop_importance.py          # Stop scoring & distance computation
 ├── svg_layers.py               # SVG layer post-processor
+├── svg_indic_font_fallback.py  # Kannada/Indic font fix for SVG labels
+├── translate_gtfs_stops.py     # Optional GTFS stop_name translation
 ├── gtfs_map_viewer.py          # Interactive HTML map generator
 ├── gtfs_analysis.py            # GTFS analysis library
 ├── adjust_svg.py               # SVG text size adjuster
+├── tests/                      # pytest (e.g. test_network_stats.py)
 ├── requirements.txt            # Python dependencies
+├── pytest.ini
 ├── src/                        # C++ source code
 │   ├── gtfs2graph/             #   GTFS → graph converter
 │   ├── topo/                   #   Topology handler (edge overlap, clustering)

@@ -13,6 +13,7 @@ License: GPL-3.0 — see LICENSE file.
 import argparse
 import json
 import os
+from typing import Optional
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,7 @@ import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+import pandas as pd
 import partridge as ptg
 
 from adjust_svg import adjust_svg_text_sizes
@@ -32,6 +34,43 @@ from stop_importance import (
     get_hf_corridor_routes,
 )
 from svg_layers import add_svg_layers, apply_progressive_hiding, compose_with_backdrop
+
+STOP_IMPORTANCE_CSV = "_stop_importance.csv"
+STOP_IMPORTANCE_CACHE_META = "_stop_importance.cache.json"
+
+
+def build_importance_cache_key(gtfs_path: Path, style: MaggaStyle) -> dict:
+    """Fingerprint for when _stop_importance.csv is still valid."""
+    st = gtfs_path.stat()
+    return {
+        "gtfs_path": str(gtfs_path.resolve()),
+        "gtfs_size": st.st_size,
+        "gtfs_mtime_ns": getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)),
+        "importance_trip_weight": style.importance_trip_weight,
+        "importance_route_weight": style.importance_route_weight,
+    }
+
+
+def try_load_cached_importance(
+    output_dir: Path, gtfs_path: Path, style: MaggaStyle
+) -> Optional[pd.DataFrame]:
+    """Load priority list from disk if cache meta matches GTFS + importance weights."""
+    csv_path = output_dir / STOP_IMPORTANCE_CSV
+    meta_path = output_dir / STOP_IMPORTANCE_CACHE_META
+    if not csv_path.is_file() or not meta_path.is_file():
+        return None
+    try:
+        with open(meta_path, encoding="utf-8") as f:
+            cached = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    current = build_importance_cache_key(gtfs_path, style)
+    if cached != current:
+        return None
+    try:
+        return pd.read_csv(csv_path, dtype={"stop_id": str})
+    except Exception:
+        return None
 
 
 def find_pipeline_tools() -> str:
@@ -65,6 +104,8 @@ def run_pipeline(
     style: MaggaStyle,
     schematic: bool = False,
     tool_dir: str = "",
+    timeout_sec: int = 300,
+    loom_extra: str = "",
 ) -> bool:
     """Run the C++ pipeline to generate a single SVG map.
 
@@ -74,6 +115,8 @@ def run_pipeline(
         style: Style configuration.
         schematic: If True, include octi step for schematic layout.
         tool_dir: Directory containing C++ tools (prepended to PATH).
+        timeout_sec: Subprocess wall-clock limit (large HF backdrops need more).
+        loom_extra: Extra CLI args for loom (e.g. "--ilp-time-limit 900").
 
     Returns:
         True if pipeline succeeded, False otherwise.
@@ -86,10 +129,12 @@ def run_pipeline(
     tm_flags = style.to_transitmap_flags()
     g2g_flags = style.to_gtfs2graph_flags()
 
+    loom_part = f"loom {loom_extra}".strip() if loom_extra.strip() else "loom"
+
     if schematic:
-        cmd = f"gtfs2graph {g2g_flags} {gtfs_zip} | topo {topo_flags} | loom | octi | transitmap {tm_flags}"
+        cmd = f"gtfs2graph {g2g_flags} {gtfs_zip} | topo {topo_flags} | {loom_part} | octi | transitmap {tm_flags}"
     else:
-        cmd = f"gtfs2graph {g2g_flags} {gtfs_zip} | topo {topo_flags} | loom | transitmap {tm_flags}"
+        cmd = f"gtfs2graph {g2g_flags} {gtfs_zip} | topo {topo_flags} | {loom_part} | transitmap {tm_flags}"
 
     try:
         result = subprocess.run(
@@ -97,7 +142,7 @@ def run_pipeline(
             shell=True,
             capture_output=True,
             env=env,
-            timeout=300,
+            timeout=timeout_sec,
         )
         if result.returncode != 0:
             stderr = result.stderr.decode("utf-8", errors="replace")
@@ -110,7 +155,7 @@ def run_pipeline(
         return True
 
     except subprocess.TimeoutExpired:
-        print("  Pipeline timed out (300s)", file=sys.stderr)
+        print(f"  Pipeline timed out ({timeout_sec}s)", file=sys.stderr)
         return False
     except Exception as e:
         print(f"  Pipeline failed: {e}", file=sys.stderr)
@@ -161,15 +206,35 @@ def generate_hf_backdrop(
         return {}
 
     results = {}
+    # HF subsets can be large; allow long wall time and cap ILP so loom finishes.
+    hf_timeout = 7200
+    hf_loom = "--ilp-time-limit 3600"
+
     if geographic:
         geo_path = str(output_dir / "_hf_corridor_geographic.svg")
-        if run_pipeline(hf_subset_path, geo_path, style, schematic=False, tool_dir=tool_dir):
+        if run_pipeline(
+            hf_subset_path,
+            geo_path,
+            style,
+            schematic=False,
+            tool_dir=tool_dir,
+            timeout_sec=hf_timeout,
+            loom_extra=hf_loom,
+        ):
             results["geographic"] = Path(geo_path)
             print(f"  Created {geo_path}", file=sys.stderr)
 
     if schematic:
         sch_path = str(output_dir / "_hf_corridor_schematic.svg")
-        if run_pipeline(hf_subset_path, sch_path, style, schematic=True, tool_dir=tool_dir):
+        if run_pipeline(
+            hf_subset_path,
+            sch_path,
+            style,
+            schematic=True,
+            tool_dir=tool_dir,
+            timeout_sec=hf_timeout,
+            loom_extra=hf_loom,
+        ):
             results["schematic"] = Path(sch_path)
             print(f"  Created {sch_path}", file=sys.stderr)
 
@@ -188,6 +253,7 @@ def process_single_stop(
     geographic: bool = True,
     schematic: bool = True,
     progressive: bool = True,
+    min_trips: Optional[int] = None,
 ) -> bool:
     """Generate all map variants for a single stop.
 
@@ -206,6 +272,7 @@ def process_single_stop(
         analyzer.create_subset(
             output_path=subset_path,
             stop_ids=[stop_id],
+            min_trips=min_trips,
         )
     except Exception as e:
         print(f"  Subset failed for {stop_id}: {e}", file=sys.stderr)
@@ -346,6 +413,16 @@ Produces geographic and/or schematic SVGs with:
         help="Save the effective style config to the output directory",
     )
 
+    cache_group = parser.add_argument_group("caching")
+    cache_group.add_argument(
+        "--refresh-importance",
+        action="store_true",
+        help=(
+            "Recompute stop priority (_stop_importance.csv) even when a valid cache "
+            "exists in the output directory"
+        ),
+    )
+
     parser.epilog = """
 examples:
   # Generate maps for all stops
@@ -369,6 +446,9 @@ notes:
   - Style config is a JSON file; use --save-style to generate a template
   - Progressive hiding creates variants with different label density
   - HF corridor backdrop provides city-wide context at low opacity
+  - Stop priority is cached as _stop_importance.csv + _stop_importance.cache.json
+    (same GTFS file + size/mtime + importance weights); use --refresh-importance
+    to rebuild after a feed update or style change to weights
 
 For more information: https://github.com/pvnkmrksk/magga
 """
@@ -400,14 +480,29 @@ For more information: https://github.com/pvnkmrksk/magga
     do_geographic = not args.schematic_only
     do_schematic = not args.geographic_only
 
-    # Compute stop importance
-    print("Computing stop importance...", file=sys.stderr)
-    feed = ptg.load_feed(args.gtfs_file)
-    importance_df = compute_stop_importance(feed, style)
+    gtfs_path = Path(args.gtfs_file).resolve()
 
-    # Save importance ranking
-    importance_df.to_csv(output_dir / "_stop_importance.csv", index=False)
-    print(f"  {len(importance_df)} stops scored", file=sys.stderr)
+    importance_df: Optional[pd.DataFrame] = None
+    if not args.refresh_importance:
+        importance_df = try_load_cached_importance(output_dir, gtfs_path, style)
+
+    if importance_df is not None:
+        print(
+            f"Using cached stop importance ({output_dir / STOP_IMPORTANCE_CSV})",
+            file=sys.stderr,
+        )
+        print(f"  {len(importance_df)} stops", file=sys.stderr)
+    else:
+        if args.refresh_importance:
+            print("Recomputing stop importance (--refresh-importance).", file=sys.stderr)
+        else:
+            print("Computing stop importance (no valid cache)...", file=sys.stderr)
+        feed = ptg.load_feed(args.gtfs_file)
+        importance_df = compute_stop_importance(feed, style)
+        importance_df.to_csv(output_dir / STOP_IMPORTANCE_CSV, index=False)
+        with open(output_dir / STOP_IMPORTANCE_CACHE_META, "w", encoding="utf-8") as f:
+            json.dump(build_importance_cache_key(gtfs_path, style), f, indent=2)
+        print(f"  {len(importance_df)} stops scored", file=sys.stderr)
 
     # Select stops to process
     if args.stops:
@@ -458,6 +553,7 @@ For more information: https://github.com/pvnkmrksk/magga
             geographic=do_geographic,
             schematic=do_schematic,
             progressive=args.progressive,
+            min_trips=args.min_trips,
         )
 
         if ok:
