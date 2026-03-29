@@ -529,17 +529,22 @@ For more information: https://github.com/pvnkmrksk/magga
 
     # Process each stop
     success_count = 0
-    for idx, row in stops_to_process.iterrows():
+    total = len(stops_to_process)
+    for i, (idx, row) in enumerate(stops_to_process.iterrows(), 1):
         stop_id = row["stop_id"]
         stop_name = row["stop_name"]
-        print(f"\n[{idx + 1}/{len(stops_to_process)}] {stop_name} ({stop_id})", file=sys.stderr)
+        print(f"\n[{i}/{total}] {stop_name} ({stop_id})", file=sys.stderr)
 
         # Compute distances and tiers for this stop
         distance_df = compute_distances_from(importance_df, [stop_id])
         tier_df = assign_tiers(importance_df, distance_df, style)
 
-        # Build tier_data dict: station_name → tier
-        tier_data = dict(zip(tier_df["stop_name"], tier_df["tier"]))
+        # Build tier_data dict: station_name → tier (keep lowest/most-visible tier
+        # when multiple stops share the same name)
+        tier_data = {}
+        for name, tier in zip(tier_df["stop_name"], tier_df["tier"]):
+            if name not in tier_data or tier < tier_data[name]:
+                tier_data[name] = tier
 
         ok = process_single_stop(
             gtfs_path=args.gtfs_file,
