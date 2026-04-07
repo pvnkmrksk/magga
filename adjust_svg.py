@@ -1,38 +1,10 @@
 #!/usr/bin/env python3
 
 """
-SVG Text Size Adjuster for Transit Maps
-=====================================
+SVG Text Size Adjuster - Scale text sizes in SVG transit maps for readability.
 
-A utility for adjusting text sizes in SVG transit maps to improve readability
-and visual consistency. Part of the extended LOOM transit map toolkit.
-
-MIT License
-
-Copyright (c) 2024 Pavan Kumar (@pvnkmrksk)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-This work builds upon the LOOM project (https://github.com/ad-freiburg/loom)
-and is distributed under compatible terms.
-
-Author: ಪವನ ಕುಮಾರ ​| Pavan Kumar, PhD (@pvnkmrksk)
+Part of the Magga (ಮಗ್ಗ/मग्ग) project: https://github.com/pvnkmrksk/magga
+License: GPL-3.0 — see LICENSE file. Author: Pavan Kumar (@pvnkmrksk)
 """
 
 import sys
@@ -112,6 +84,14 @@ def main():
     """
     if len(sys.argv) != 4:
         print("Usage: python adjust_svg.py <input_svg> <output_svg> <scale_factor>")
+        print()
+        print("  Scale text sizes in an SVG file by a given factor.")
+        print()
+        print("  scale_factor: e.g. 0.85 to shrink to 85%, 1.2 to enlarge to 120%")
+        print()
+        print("Examples:")
+        print("  python adjust_svg.py map.svg map_small.svg 0.85")
+        print("  python adjust_svg.py map.svg map_large.svg 1.5")
         sys.exit(1)
     
     try:

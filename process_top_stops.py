@@ -1,3 +1,14 @@
+"""
+Process Top Stops - Batch analysis of highest-traffic stops (EXPERIMENTAL).
+
+NOTE: This script has known issues:
+  - Calls analyzer.subset_by_stops() which does not exist on GTFSAnalyzer.
+    The correct method is analyzer.create_subset(stop_ids=[...], output_path=...).
+  - Hardcoded input path 'bmtc-2.zip' — edit INPUT_GTFS before use.
+
+Part of Magga: https://github.com/pvnkmrksk/magga
+"""
+
 import pandas as pd
 from gtfs_analysis import GTFSAnalyzer
 from pathlib import Path
