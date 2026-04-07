@@ -18,6 +18,8 @@ import sys
 from typing import Dict, Optional
 
 from branca.colormap import LinearColormap
+
+from magga_html_footer import append_magga_html_footer
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, to_hex
@@ -357,6 +359,7 @@ class GTFSMapCreator:
         if output_path is None:
             output_path = self.gtfs_path.replace(".zip", "_map.html")
         m.save(output_path)
+        append_magga_html_footer(output_path)
 
         # print(f"Map created successfully at {output_path}")
 

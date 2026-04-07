@@ -94,6 +94,7 @@ def add_svg_layers(
     output_svg: Union[str, Path],
     tier_data: Optional[Dict[str, int]] = None,
     style: Optional[MaggaStyle] = None,
+    default_unmatched_station_tier: int = 4,
 ) -> None:
     """Restructure a transit map SVG with semantic, Inkscape-compatible layers.
 
@@ -119,6 +120,9 @@ def add_svg_layers(
         output_svg: Path to write layered SVG.
         tier_data: Optional dict of {station_name: tier_number}.
         style: Optional style config (unused currently, reserved for future).
+        default_unmatched_station_tier: Tier when a label string is not in ``tier_data``
+            (e.g. truncation mismatch). Default 4 matches the hidden tier; use 1 to
+            keep fringe labels visible when using distance-based tiers.
     """
     tree = ET.parse(str(input_svg))
     root = tree.getroot()
@@ -201,7 +205,9 @@ def add_svg_layers(
                 elif tag == "text":
                     name = _extract_station_name(child)
                     if tier_data:
-                        tier = _get_tier_for_name(name, tier_data)
+                        tier = _get_tier_for_name(
+                            name, tier_data, default_tier=default_unmatched_station_tier
+                        )
                         target = label_layers.get(tier, label_layers.get(4))
                     else:
                         target = label_layers[0]
@@ -230,7 +236,9 @@ def add_svg_layers(
     tree.write(str(output_svg), encoding="utf-8", xml_declaration=True)
 
 
-def _get_tier_for_name(name: str, tier_data: Dict[str, int]) -> int:
+def _get_tier_for_name(
+    name: str, tier_data: Dict[str, int], default_tier: int = 4
+) -> int:
     """Look up tier for a station name, with fuzzy matching."""
     # Exact match
     if name in tier_data:
@@ -244,8 +252,7 @@ def _get_tier_for_name(name: str, tier_data: Dict[str, int]) -> int:
     for key, tier in tier_data.items():
         if name_lower in key.lower() or key.lower() in name_lower:
             return tier
-    # Default to tier 4 (hidden) if no match
-    return 4
+    return default_tier
 
 
 def compose_with_backdrop(
@@ -349,6 +356,12 @@ def apply_progressive_hiding(
 
         for elem in root.iter():
             elem_id = elem.get("id", "")
+
+            # Base map sets tier 4 to display:none so distant labels are off by default.
+            # The "full" variant must turn that layer back on, or fringe stops stay blank.
+            if variant_name == "full" and elem_id == "layer-station-labels-tier4":
+                elem.attrib.pop("style", None)
+                continue
 
             # Hide tier groups
             for tier in config["hide_tiers"]:

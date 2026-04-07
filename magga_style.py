@@ -59,6 +59,12 @@ class MaggaStyle:
     tier_distances: List[float] = field(default_factory=lambda: [500.0, 1500.0, 3000.0])
     tier2_min_routes: int = 3         # min routes for tier 2 label visibility
     tier3_min_routes: int = 5         # min routes for tier 3 (major junctions)
+    # If True, every stop is placed in tier 1 for SVG layers (no distance-based hiding).
+    show_all_station_labels: bool = False
+    # If True, skip tier split and progressive SVG variants — one visible station label layer.
+    flat_station_labels: bool = False
+    # In tier mode, keep first/last trip stops in tier 1 so line ends stay labeled.
+    terminus_always_labeled: bool = True
 
     # -- Importance scoring weights --
     importance_trip_weight: float = 0.4

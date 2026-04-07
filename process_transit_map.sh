@@ -351,6 +351,7 @@ COMMON_PARAMS="--line-width $LINE_WIDTH \
 
 # Run common pipeline once and save intermediate result
 log_section "Generating Maps"
+log_info "Running gtfs2graph → topo → loom (no log output until loom finishes; large subsets can take many minutes — see -lt / process CPU)"
 LOOM_JSON="$OUTPUT_DIR/${BASENAME}_loom.json"
 PIPELINE_CMD="gtfs2graph -m bus $SUBSET_GTFS | topo --smooth $SMOOTHING -d $MAX_AGGR_DIST | loom $LOOM_EXTRA_ARGS > $LOOM_JSON"
 log_cmd "$PIPELINE_CMD"

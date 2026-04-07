@@ -6,7 +6,7 @@ License: GPL-3.0 — see LICENSE file.
 """
 
 import math
-from typing import List
+from typing import List, Set
 
 import pandas as pd
 from partridge.gtfs import Feed
@@ -80,6 +80,14 @@ def compute_stop_importance(feed: Feed, style: MaggaStyle = None) -> pd.DataFram
     )
 
     return df.sort_values("importance", ascending=False).reset_index(drop=True)
+
+
+def terminus_stop_ids(feed: Feed) -> Set[str]:
+    """Stop IDs that are the first or last scheduled stop on any trip (route termini)."""
+    st = feed.stop_times.sort_values(["trip_id", "stop_sequence"])
+    first = st.groupby("trip_id", sort=False).first()["stop_id"].astype(str)
+    last = st.groupby("trip_id", sort=False).last()["stop_id"].astype(str)
+    return set(first.tolist()) | set(last.tolist())
 
 
 def compute_distances_from(
@@ -161,6 +169,19 @@ def assign_tiers(
     df["show_label"] = df["tier"] <= 3
 
     return df.sort_values(["tier", "importance"], ascending=[True, False]).reset_index(drop=True)
+
+
+def apply_terminus_tier_override(
+    tier_df: pd.DataFrame, terminus_ids: Set[str]
+) -> pd.DataFrame:
+    """Force tier 1 for route termini so line-end labels are never in the hidden tier."""
+    if not terminus_ids:
+        return tier_df
+    out = tier_df.copy()
+    mask = out["stop_id"].astype(str).isin(terminus_ids)
+    out.loc[mask, "tier"] = 1
+    out.loc[mask, "show_label"] = True
+    return out
 
 
 def get_hf_corridor_routes(feed: Feed, min_trips: int = None, style: MaggaStyle = None) -> List[str]:

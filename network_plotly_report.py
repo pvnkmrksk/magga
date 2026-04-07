@@ -16,6 +16,8 @@ from typing import Optional
 
 import pandas as pd
 
+from magga_html_footer import append_magga_html_footer
+
 
 def write_route_trip_plotly_html(
     routes_df: pd.DataFrame,
@@ -167,3 +169,4 @@ def write_route_trip_plotly_html(
         include_plotlyjs="cdn",
         config={"displayModeBar": True, "scrollZoom": True},
     )
+    append_magga_html_footer(output_path)

@@ -14,7 +14,7 @@ Work from the top when you can; drop down only when you need a narrow knob or a 
 |-------|------|------|
 | **1** | `magga_cli.py` | **One-stop shop:** stop/route rankings (CSV), top-*N* or top-*%* route subsets, trip-frequency plot. Built on `network_stats` + `GTFSAnalyzer`. |
 | **2** | `process_transit_map.sh` | **SVG transit maps (primary output):** optional filter (`-s`, `-r`, `-m`, **`--route-ids`**, **`--top-routes` / `-n`**) → C++ pipeline → geographic + schematic SVG + Indic font fix. |
-| **3** | Focused Python CLIs | **Specialist / debugging:** subset-only, stats-only, Folium HTML, per-stop batches, translation helpers, manual SVG tweaks. |
+| **3** | Focused Python CLIs | **Specialist / debugging:** subset-only, stats-only, Folium HTML, `batch_transit_maps.py` (EN/KN × merged stops × route families), per-stop batches, translation helpers. |
 | **4** | C++ tools (`gtfs2graph` …) | **Full control** over each pipeline stage. |
 
 **Typical end-to-end (rank → subset → map):**
@@ -55,6 +55,26 @@ python magga_cli.py city.zip --stats-dir output/stats --plot-top-routes 50
 ```
 
 Use `export MAGGA_PYTHON=/path/to/venv/bin/python` if `python3` lacks `partridge`. See `process_transit_map.sh -h` for `-lt` (loom time limit) and styling flags.
+
+**Batch orchestration (`batch_transit_maps.py`):** merged same-name stops (rare-first), least-first single stops, route wildcards (`413*`) or regex on `route_short_name` (`^31[0-9]`), EN+KN feeds, `default`/`compact` style profiles. Progressive SVG variants (`*_important.svg`, `*_junctions.svg`, `*_minimal.svg` = reduced labels) come from `generate_all_stops.py --progressive`.
+
+```bash
+# Test (1 merged name-group + top-3 route SVGs)
+python batch_transit_maps.py demo --en-feed city.zip --out output/batch_smoke
+
+# Rarest 50 merged names, EN + KN (KN pass applies Indic font fix)
+python batch_transit_maps.py stops --en-feed city.zip --kn-feed city-kn.zip --out output/batch \\
+  --merge-names --max-groups 50 --profiles default compact --skip-existing
+
+# Then 100 merged groups (new folder: change --max-groups 100 or copy output tree)
+
+# Rarest 100 individual stops (no name merge)
+python batch_transit_maps.py stops --en-feed city.zip --out output/batch --least-first --max-groups 100
+
+# Route families
+python batch_transit_maps.py routes --en-feed city.zip --out output/batch \\
+  --wildcard '413*' --regex '^31[0-9]'
+```
 
 **Tests:**
 
@@ -413,6 +433,10 @@ docker run -i magga gtfs2graph -m bus < input.zip
 # With Gurobi license for advanced optimization
 docker run -v /path/to/gurobi.lic:/gurobi/gurobi.lic magga <TOOL>
 ```
+
+## Magga online
+
+**[magga.kutuhula.in](https://magga.kutuhula.in)** — Made with ❤️ by [kutūhuḷa](https://magga.kutuhula.in).
 
 ## License
 

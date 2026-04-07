@@ -11,9 +11,10 @@ License: GPL-3.0 — see LICENSE file.
 """
 
 import argparse
+import hashlib
 import json
 import os
-from typing import Optional
+from typing import List, Optional
 import shutil
 import subprocess
 import sys
@@ -28,12 +29,33 @@ from adjust_svg import adjust_svg_text_sizes
 from gtfs_analysis import GTFSAnalyzer
 from magga_style import MaggaStyle
 from stop_importance import (
+    apply_terminus_tier_override,
     assign_tiers,
     compute_distances_from,
     compute_stop_importance,
     get_hf_corridor_routes,
+    terminus_stop_ids,
 )
 from svg_layers import add_svg_layers, apply_progressive_hiding, compose_with_backdrop
+from stop_groups import build_stop_name_groups, sort_groups_rare_first
+
+
+def build_tier_data_from_frame(
+    tier_df: pd.DataFrame, *, all_station_labels: bool
+) -> dict:
+    """Station name → tier for ``add_svg_layers``. Tier 4 = far / low-importance (hidden layer)."""
+    if all_station_labels:
+        out = {}
+        for _, row in tier_df.iterrows():
+            nm = str(row["stop_name"]).strip()
+            if nm:
+                out[nm] = 1
+        return out
+    tier_data = {}
+    for name, tier in zip(tier_df["stop_name"], tier_df["tier"]):
+        if name not in tier_data or tier < tier_data[name]:
+            tier_data[name] = int(tier)
+    return tier_data
 
 STOP_IMPORTANCE_CSV = "_stop_importance.csv"
 STOP_IMPORTANCE_CACHE_META = "_stop_importance.cache.json"
@@ -248,30 +270,50 @@ def process_single_stop(
     output_dir: Path,
     style: MaggaStyle,
     tool_dir: str,
-    tier_data: dict,
     backdrop_paths: dict,
+    tier_data: Optional[dict] = None,
     geographic: bool = True,
     schematic: bool = True,
     progressive: bool = True,
     min_trips: Optional[int] = None,
+    focal_stop_ids: Optional[List[str]] = None,
+    skip_existing: bool = False,
+    indic_font_fallback: bool = False,
+    all_station_labels: bool = False,
+    flat_labels: bool = False,
+    gtfs_analyzer: Optional[GTFSAnalyzer] = None,
 ) -> bool:
-    """Generate all map variants for a single stop.
+    """Generate all map variants for one focal stop or a merged same-name group.
 
-    Returns True if at least one map was generated successfully.
+    ``focal_stop_ids`` — all physical stops to include in the subset (union of
+    trips serving any of them). Defaults to ``[stop_id]``. Tier distances use
+    the nearest of these focal stops.
+
+    Returns True if at least one map was generated successfully (or skipped).
     """
+    focal_ids = [str(x) for x in (focal_stop_ids if focal_stop_ids is not None else [stop_id])]
+
     # Clean name for directory
     clean_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in stop_name)
     clean_name = clean_name.strip().replace(" ", "_")[:60]
-    stop_dir = output_dir / f"{stop_id}_{clean_name}"
+    if len(focal_ids) == 1:
+        stop_dir = output_dir / f"{focal_ids[0]}_{clean_name}"
+    else:
+        h = hashlib.md5(",".join(sorted(focal_ids)).encode()).hexdigest()[:10]
+        stop_dir = output_dir / f"merged_{h}_{clean_name[:50]}"
+
+    if skip_existing and (stop_dir / "stop_info.json").is_file():
+        return True
+
     stop_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create GTFS subset for this stop
-    analyzer = GTFSAnalyzer(gtfs_path)
+    # Create GTFS subset for this stop (or merged same-name group)
+    analyzer = gtfs_analyzer if gtfs_analyzer is not None else GTFSAnalyzer(gtfs_path)
     subset_path = str(stop_dir / "subset.zip")
     try:
         analyzer.create_subset(
             output_path=subset_path,
-            stop_ids=[stop_id],
+            stop_ids=focal_ids,
             min_trips=min_trips,
         )
     except Exception as e:
@@ -300,9 +342,17 @@ def process_single_stop(
         except Exception:
             adjusted_svg = raw_svg
 
-        # Add semantic layers with tier data
+        # Add semantic layers (tier_data None => single visible label layer, no tier-4 hiding)
         try:
-            add_svg_layers(adjusted_svg, layered_svg, tier_data=tier_data, style=style)
+            add_svg_layers(
+                adjusted_svg,
+                layered_svg,
+                tier_data=tier_data,
+                style=style,
+                default_unmatched_station_tier=(
+                    1 if (all_station_labels or flat_labels) else 4
+                ),
+            )
         except Exception as e:
             print(f"  Layer processing failed for {stop_id}/{map_name}: {e}", file=sys.stderr)
             # Fall back to adjusted SVG
@@ -310,8 +360,8 @@ def process_single_stop(
 
         success = True
 
-        # Generate progressive hiding variants
-        if progressive and tier_data:
+        # Generate progressive hiding variants (needs tier split)
+        if progressive and tier_data and not flat_labels:
             try:
                 apply_progressive_hiding(layered_svg, stop_dir, base_name=map_name)
             except Exception as e:
@@ -334,15 +384,122 @@ def process_single_stop(
                 pass
 
     # Write stop metadata
+    try:
+        zsize = os.path.getsize(subset_path)
+    except OSError:
+        zsize = None
     info = {
         "stop_id": stop_id,
         "stop_name": stop_name,
+        "focal_stop_ids": focal_ids,
+        "merged_same_name": len(focal_ids) > 1,
+        "subset_zip_bytes": zsize,
+        "all_station_labels": all_station_labels,
+        "flat_labels": flat_labels,
         "tiers": {name: tier for name, tier in tier_data.items()} if tier_data else {},
     }
     with open(stop_dir / "stop_info.json", "w") as f:
         json.dump(info, f, indent=2)
 
+    if indic_font_fallback and success:
+        try:
+            from svg_indic_font_fallback import apply_fallback
+
+            for p in stop_dir.rglob("*.svg"):
+                if p.name.startswith("_"):
+                    continue
+                try:
+                    raw = p.read_text(encoding="utf-8")
+                    p.write_text(apply_fallback(raw), encoding="utf-8")
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+
     return success
+
+
+_WORKER_SHARED_ANALYZER: Optional[GTFSAnalyzer] = None
+
+
+def _parallel_pool_init(gtfs_path: str) -> None:
+    global _WORKER_SHARED_ANALYZER
+    _WORKER_SHARED_ANALYZER = GTFSAnalyzer(gtfs_path)
+
+
+def _parallel_process_job(payload: dict) -> tuple[int, str, bool]:
+    """Run one stop or merged group (used with ``ProcessPoolExecutor``)."""
+    global _WORKER_SHARED_ANALYZER
+    style = MaggaStyle.from_file(payload["style_path"])
+    importance_df = pd.read_csv(payload["importance_csv"], dtype={"stop_id": str})
+    focal = payload.get("focal_stop_ids")
+    sid = str(payload["stop_id"])
+    distance_df = compute_distances_from(
+        importance_df, focal if focal is not None else [sid]
+    )
+    tier_df = assign_tiers(importance_df, distance_df, style)
+    terminus_ids_w: set = set()
+    tp = payload.get("terminus_path")
+    if tp and Path(tp).is_file():
+        terminus_ids_w = set(Path(tp).read_text().split())
+    if payload.get("terminus_on", True) and terminus_ids_w:
+        tier_df = apply_terminus_tier_override(tier_df, terminus_ids_w)
+    if payload.get("flat_labels"):
+        tier_data = None
+    else:
+        tier_data = build_tier_data_from_frame(
+            tier_df, all_station_labels=payload["all_station_labels"]
+        )
+    bp_raw = payload.get("backdrop_paths") or {}
+    backdrop_paths: dict = {}
+    for k, v in bp_raw.items():
+        backdrop_paths[k] = Path(v) if v else None
+
+    ok = process_single_stop(
+        gtfs_path=payload["gtfs_path"],
+        stop_id=sid,
+        stop_name=payload["stop_name"],
+        output_dir=Path(payload["output_dir"]),
+        style=style,
+        tool_dir=payload["tool_dir"],
+        tier_data=tier_data,
+        backdrop_paths=backdrop_paths,
+        geographic=payload["geographic"],
+        schematic=payload["schematic"],
+        progressive=payload["progressive"],
+        min_trips=payload.get("min_trips"),
+        focal_stop_ids=focal,
+        skip_existing=payload["skip_existing"],
+        indic_font_fallback=payload["indic_font_fallback"],
+        all_station_labels=payload["all_station_labels"],
+        flat_labels=payload.get("flat_labels", False),
+        gtfs_analyzer=_WORKER_SHARED_ANALYZER,
+    )
+    return (int(payload["index"]), str(payload["label"]), ok)
+
+
+def _backdrop_paths_payload(backdrop_paths: dict) -> dict:
+    return {k: (str(v) if v else None) for k, v in backdrop_paths.items()}
+
+
+def _tier_data_for_maps(
+    importance_df: pd.DataFrame,
+    distance_df: pd.DataFrame,
+    style: MaggaStyle,
+    *,
+    all_station_labels: bool,
+    flat_labels: bool,
+    terminus_on: bool,
+    terminus_ids: set,
+) -> Optional[dict]:
+    tier_df = assign_tiers(importance_df, distance_df, style)
+    if terminus_on and terminus_ids:
+        tier_df = apply_terminus_tier_override(tier_df, terminus_ids)
+    if flat_labels:
+        return None
+    return build_tier_data_from_frame(
+        tier_df, all_station_labels=all_station_labels
+    )
 
 
 def main():
@@ -382,6 +539,44 @@ Produces geographic and/or schematic SVGs with:
         "-m", "--min-trips", type=int, default=5,
         help="Min trips for route inclusion in subsets (default: 5)",
     )
+    sel_group.add_argument(
+        "--merge-identical-names",
+        action="store_true",
+        help=(
+            "Merge all stops that share the same normalized stop_name into one subset "
+            "(one map per name). Ordered rarest-first via min trip count per group."
+        ),
+    )
+    sel_group.add_argument(
+        "--least-first",
+        action="store_true",
+        help="Process stops from lowest trip_count upward (ignores importance ranking).",
+    )
+    sel_group.add_argument(
+        "--max-groups",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "With --merge-identical-names: cap how many name-groups to process (rarest first). "
+            "With --least-first: cap how many individual stops after sorting."
+        ),
+    )
+    sel_group.add_argument(
+        "--skip-top-n",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Exclude the N highest-importance stops, then process the rest "
+            "(tail batch: everything except the busiest N). Ignored with --stops."
+        ),
+    )
+    sel_group.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip a stop directory that already has stop_info.json (fast resume).",
+    )
 
     # Features
     feat_group = parser.add_argument_group("features")
@@ -400,6 +595,40 @@ Produces geographic and/or schematic SVGs with:
     feat_group.add_argument(
         "--schematic-only", action="store_true",
         help="Skip geographic maps",
+    )
+    feat_group.add_argument(
+        "--indic-font-fallback",
+        action="store_true",
+        help="After generation, patch SVGs for Noto-first Kannada station labels (KN feeds).",
+    )
+    feat_group.add_argument(
+        "--all-station-labels",
+        action="store_true",
+        help=(
+            "Put every stop in label tier 1 (no distance-based hiding). "
+            "Fixes fringe/tip labels that were tier 4 (hidden). "
+            "Also treats unmatched SVG names as tier 1. "
+            "Or set show_all_station_labels in --style JSON."
+        ),
+    )
+    feat_group.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Process N stops or name-groups in parallel (one GTFS load per worker process). "
+            "Useful on multi-core machines; default 1 keeps memory lower."
+        ),
+    )
+    feat_group.add_argument(
+        "--flat-labels",
+        action="store_true",
+        help=(
+            "Single station-label layer only (no tiers, no tier-4 hiding); "
+            "skip progressive _full/_important/_junctions/_minimal variants. "
+            "Or set flat_station_labels in --style JSON."
+        ),
     )
 
     # Style
@@ -455,6 +684,10 @@ For more information: https://github.com/pvnkmrksk/magga
 
     args = parser.parse_args()
 
+    if args.workers < 1:
+        print("Error: --workers must be >= 1", file=sys.stderr)
+        sys.exit(1)
+
     # Validate input
     if not Path(args.gtfs_file).exists():
         print(f"Error: {args.gtfs_file} not found", file=sys.stderr)
@@ -482,6 +715,8 @@ For more information: https://github.com/pvnkmrksk/magga
 
     gtfs_path = Path(args.gtfs_file).resolve()
 
+    feed = ptg.load_feed(args.gtfs_file)
+
     importance_df: Optional[pd.DataFrame] = None
     if not args.refresh_importance:
         importance_df = try_load_cached_importance(output_dir, gtfs_path, style)
@@ -497,23 +732,135 @@ For more information: https://github.com/pvnkmrksk/magga
             print("Recomputing stop importance (--refresh-importance).", file=sys.stderr)
         else:
             print("Computing stop importance (no valid cache)...", file=sys.stderr)
-        feed = ptg.load_feed(args.gtfs_file)
         importance_df = compute_stop_importance(feed, style)
         importance_df.to_csv(output_dir / STOP_IMPORTANCE_CSV, index=False)
         with open(output_dir / STOP_IMPORTANCE_CACHE_META, "w", encoding="utf-8") as f:
             json.dump(build_importance_cache_key(gtfs_path, style), f, indent=2)
         print(f"  {len(importance_df)} stops scored", file=sys.stderr)
 
-    # Select stops to process
-    if args.stops:
+    importance_df = importance_df.copy()
+    importance_df["stop_id"] = importance_df["stop_id"].astype(str)
+
+    skip_top_n = max(0, int(getattr(args, "skip_top_n", 0) or 0))
+    excluded_top: set = set()
+    if skip_top_n > 0 and args.stops:
+        print(
+            "  Note: --skip-top-n is ignored when using explicit --stops",
+            file=sys.stderr,
+        )
+    if skip_top_n > 0 and not args.stops:
+        if skip_top_n >= len(importance_df):
+            print(
+                "Error: --skip-top-n must be less than the number of stops in the feed",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        excluded_top = set(importance_df.head(skip_top_n)["stop_id"].astype(str))
+        print(
+            f"  Focal batch: skipping top {skip_top_n} stops by importance "
+            f"({len(importance_df) - skip_top_n} eligible as focal stops). "
+            "Full feed still used for label tiers.",
+            file=sys.stderr,
+        )
+
+    terminus_ids = terminus_stop_ids(feed)
+    terminus_path = output_dir / "_terminus_stop_ids.txt"
+    terminus_path.write_text("\n".join(sorted(terminus_ids)), encoding="utf-8")
+    print(
+        f"  Route termini (first/last per trip): {len(terminus_ids)} ids → {terminus_path.name}",
+        file=sys.stderr,
+    )
+
+    importance_csv_for_jobs = str((output_dir / STOP_IMPORTANCE_CSV).resolve())
+
+    use_all_labels = bool(
+        args.all_station_labels or getattr(style, "show_all_station_labels", False)
+    )
+    flat_labels = bool(
+        getattr(args, "flat_labels", False)
+        or getattr(style, "flat_station_labels", False)
+    )
+    terminus_on = (
+        getattr(style, "terminus_always_labeled", True)
+        and not use_all_labels
+        and not flat_labels
+    )
+    if use_all_labels:
+        print(
+            "  Station labels: distance tiers disabled (all tier 1; see --all-station-labels)",
+            file=sys.stderr,
+        )
+    if flat_labels:
+        print(
+            "  Flat labels: no tier split / no progressive variants (see --flat-labels)",
+            file=sys.stderr,
+        )
+
+    if args.merge_identical_names and args.least_first:
+        print(
+            "Error: use only one of --merge-identical-names and --least-first",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if args.merge_identical_names and args.stops:
+        print(
+            "Error: --stops is not supported with --merge-identical-names",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    focal_importance_df = (
+        importance_df.iloc[skip_top_n:].copy().reset_index(drop=True)
+        if (skip_top_n > 0 and not args.stops)
+        else importance_df
+    )
+
+    # Select stops / name-groups to process
+    merge_groups = None
+    if args.merge_identical_names:
+        merge_groups = sort_groups_rare_first(build_stop_name_groups(feed))
+        if excluded_top:
+            before = len(merge_groups)
+            merge_groups = [
+                g
+                for g in merge_groups
+                if not any(str(sid) in excluded_top for sid in g.stop_ids)
+            ]
+            print(
+                f"  Excluded name-groups touching top-{skip_top_n} stops: "
+                f"{before} → {len(merge_groups)}",
+                file=sys.stderr,
+            )
+        if args.max_groups is not None:
+            merge_groups = merge_groups[: max(0, args.max_groups)]
+        print(
+            f"  Processing {len(merge_groups)} merged name-groups (rare-first)",
+            file=sys.stderr,
+        )
+    elif args.stops:
         stop_ids = [s.strip() for s in args.stops.split(",")]
         stops_to_process = importance_df[importance_df["stop_id"].isin(stop_ids)]
+        if args.max_groups is not None:
+            stops_to_process = stops_to_process.head(args.max_groups)
+    elif args.least_first:
+        stops_to_process = focal_importance_df.sort_values(
+            ["trip_count", "stop_id"], ascending=[True, True]
+        )
+        if args.max_groups is not None:
+            stops_to_process = stops_to_process.head(args.max_groups)
+        elif args.top_n is not None:
+            stops_to_process = stops_to_process.head(args.top_n)
     elif args.top_n:
-        stops_to_process = importance_df.head(args.top_n)
+        stops_to_process = focal_importance_df.head(args.top_n)
+        if args.max_groups is not None:
+            stops_to_process = stops_to_process.head(args.max_groups)
     else:
-        stops_to_process = importance_df
+        stops_to_process = focal_importance_df
+        if args.max_groups is not None:
+            stops_to_process = stops_to_process.head(args.max_groups)
 
-    print(f"  Processing {len(stops_to_process)} stops", file=sys.stderr)
+    if not args.merge_identical_names:
+        print(f"  Processing {len(stops_to_process)} stops", file=sys.stderr)
 
     # Generate HF backdrop if requested
     backdrop_paths = {}
@@ -527,47 +874,211 @@ For more information: https://github.com/pvnkmrksk/magga
             schematic=do_schematic,
         )
 
-    # Process each stop
-    success_count = 0
-    total = len(stops_to_process)
-    for i, (idx, row) in enumerate(stops_to_process.iterrows(), 1):
-        stop_id = row["stop_id"]
-        stop_name = row["stop_name"]
-        print(f"\n[{i}/{total}] {stop_name} ({stop_id})", file=sys.stderr)
-
-        # Compute distances and tiers for this stop
-        distance_df = compute_distances_from(importance_df, [stop_id])
-        tier_df = assign_tiers(importance_df, distance_df, style)
-
-        # Build tier_data dict: station_name → tier (keep lowest/most-visible tier
-        # when multiple stops share the same name)
-        tier_data = {}
-        for name, tier in zip(tier_df["stop_name"], tier_df["tier"]):
-            if name not in tier_data or tier < tier_data[name]:
-                tier_data[name] = tier
-
-        ok = process_single_stop(
-            gtfs_path=args.gtfs_file,
-            stop_id=stop_id,
-            stop_name=stop_name,
-            output_dir=output_dir,
-            style=style,
-            tool_dir=tool_dir,
-            tier_data=tier_data,
-            backdrop_paths=backdrop_paths,
-            geographic=do_geographic,
-            schematic=do_schematic,
-            progressive=args.progressive,
-            min_trips=args.min_trips,
-        )
-
-        if ok:
-            success_count += 1
-            print(f"  Done.", file=sys.stderr)
+    worker_style_path: Optional[str] = None
+    if args.workers > 1:
+        if args.style and Path(args.style).exists():
+            worker_style_path = str(Path(args.style).resolve())
         else:
-            print(f"  Failed.", file=sys.stderr)
+            worker_style_path = str(output_dir / "_worker_style.json")
+            style.save(worker_style_path)
+        print(f"  Parallel workers: {args.workers}", file=sys.stderr)
 
-    print(f"\nCompleted: {success_count}/{len(stops_to_process)} stops", file=sys.stderr)
+    # Process each stop or merged group
+    success_count = 0
+    if merge_groups is not None:
+        total = len(merge_groups)
+        if args.workers > 1 and worker_style_path is not None:
+            jobs = []
+            for i, grp in enumerate(merge_groups, 1):
+                jobs.append(
+                    {
+                        "index": i,
+                        "label": f"{grp.normalized_name} ({len(grp.stop_ids)} stops, "
+                        f"min_trips={grp.min_trip_count})",
+                        "gtfs_path": str(gtfs_path),
+                        "output_dir": str(output_dir),
+                        "style_path": worker_style_path,
+                        "importance_csv": importance_csv_for_jobs,
+                        "tool_dir": tool_dir,
+                        "backdrop_paths": _backdrop_paths_payload(backdrop_paths),
+                        "geographic": do_geographic,
+                        "schematic": do_schematic,
+                        "progressive": args.progressive,
+                        "min_trips": args.min_trips,
+                        "skip_existing": args.skip_existing,
+                        "indic_font_fallback": args.indic_font_fallback,
+                        "all_station_labels": use_all_labels,
+                        "flat_labels": flat_labels,
+                        "terminus_path": str(terminus_path.resolve()),
+                        "terminus_on": terminus_on,
+                        "stop_id": grp.rep_stop_id,
+                        "stop_name": grp.normalized_name,
+                        "focal_stop_ids": grp.stop_ids,
+                    }
+                )
+            with ProcessPoolExecutor(
+                max_workers=args.workers,
+                initializer=_parallel_pool_init,
+                initargs=(str(gtfs_path),),
+            ) as ex:
+                futures = {ex.submit(_parallel_process_job, j): j for j in jobs}
+                for fut in as_completed(futures):
+                    j = futures[fut]
+                    try:
+                        idx, label, ok = fut.result()
+                    except Exception as e:
+                        print(
+                            f"\n  Worker error ({j.get('label', '?')}): {e}",
+                            file=sys.stderr,
+                        )
+                        ok = False
+                    if ok:
+                        success_count += 1
+                        print(f"\n[{idx}/{total}] {label}  Done.", file=sys.stderr)
+                    else:
+                        print(f"\n[{idx}/{total}] {label}  Failed.", file=sys.stderr)
+        else:
+            for i, grp in enumerate(merge_groups, 1):
+                print(
+                    f"\n[{i}/{total}] {grp.normalized_name} "
+                    f"({len(grp.stop_ids)} stops, min_trips={grp.min_trip_count})",
+                    file=sys.stderr,
+                )
+                distance_df = compute_distances_from(importance_df, grp.stop_ids)
+                tier_data = _tier_data_for_maps(
+                    importance_df,
+                    distance_df,
+                    style,
+                    all_station_labels=use_all_labels,
+                    flat_labels=flat_labels,
+                    terminus_on=terminus_on,
+                    terminus_ids=terminus_ids,
+                )
+
+                ok = process_single_stop(
+                    gtfs_path=args.gtfs_file,
+                    stop_id=grp.rep_stop_id,
+                    stop_name=grp.normalized_name,
+                    output_dir=output_dir,
+                    style=style,
+                    tool_dir=tool_dir,
+                    tier_data=tier_data,
+                    backdrop_paths=backdrop_paths,
+                    geographic=do_geographic,
+                    schematic=do_schematic,
+                    progressive=args.progressive,
+                    min_trips=args.min_trips,
+                    focal_stop_ids=grp.stop_ids,
+                    skip_existing=args.skip_existing,
+                    indic_font_fallback=args.indic_font_fallback,
+                    all_station_labels=use_all_labels,
+                    flat_labels=flat_labels,
+                )
+                if ok:
+                    success_count += 1
+                    print("  Done.", file=sys.stderr)
+                else:
+                    print("  Failed.", file=sys.stderr)
+        print(
+            f"\nCompleted: {success_count}/{len(merge_groups)} name-groups",
+            file=sys.stderr,
+        )
+    else:
+        total = len(stops_to_process)
+        if args.workers > 1 and worker_style_path is not None:
+            jobs = []
+            for i, (idx, row) in enumerate(stops_to_process.iterrows(), 1):
+                stop_id = str(row["stop_id"])
+                stop_name = row["stop_name"]
+                jobs.append(
+                    {
+                        "index": i,
+                        "label": f"{stop_name} ({stop_id})",
+                        "gtfs_path": str(gtfs_path),
+                        "output_dir": str(output_dir),
+                        "style_path": worker_style_path,
+                        "importance_csv": importance_csv_for_jobs,
+                        "tool_dir": tool_dir,
+                        "backdrop_paths": _backdrop_paths_payload(backdrop_paths),
+                        "geographic": do_geographic,
+                        "schematic": do_schematic,
+                        "progressive": args.progressive,
+                        "min_trips": args.min_trips,
+                        "skip_existing": args.skip_existing,
+                        "indic_font_fallback": args.indic_font_fallback,
+                        "all_station_labels": use_all_labels,
+                        "flat_labels": flat_labels,
+                        "terminus_path": str(terminus_path.resolve()),
+                        "terminus_on": terminus_on,
+                        "stop_id": stop_id,
+                        "stop_name": stop_name,
+                        "focal_stop_ids": None,
+                    }
+                )
+            with ProcessPoolExecutor(
+                max_workers=args.workers,
+                initializer=_parallel_pool_init,
+                initargs=(str(gtfs_path),),
+            ) as ex:
+                futures = {ex.submit(_parallel_process_job, j): j for j in jobs}
+                for fut in as_completed(futures):
+                    j = futures[fut]
+                    try:
+                        idx, label, ok = fut.result()
+                    except Exception as e:
+                        print(
+                            f"\n  Worker error ({j.get('label', '?')}): {e}",
+                            file=sys.stderr,
+                        )
+                        ok = False
+                    if ok:
+                        success_count += 1
+                        print(f"\n[{idx}/{total}] {label}  Done.", file=sys.stderr)
+                    else:
+                        print(f"\n[{idx}/{total}] {label}  Failed.", file=sys.stderr)
+        else:
+            for i, (idx, row) in enumerate(stops_to_process.iterrows(), 1):
+                stop_id = str(row["stop_id"])
+                stop_name = row["stop_name"]
+                print(f"\n[{i}/{total}] {stop_name} ({stop_id})", file=sys.stderr)
+
+                distance_df = compute_distances_from(importance_df, [stop_id])
+                tier_data = _tier_data_for_maps(
+                    importance_df,
+                    distance_df,
+                    style,
+                    all_station_labels=use_all_labels,
+                    flat_labels=flat_labels,
+                    terminus_on=terminus_on,
+                    terminus_ids=terminus_ids,
+                )
+
+                ok = process_single_stop(
+                    gtfs_path=args.gtfs_file,
+                    stop_id=stop_id,
+                    stop_name=stop_name,
+                    output_dir=output_dir,
+                    style=style,
+                    tool_dir=tool_dir,
+                    tier_data=tier_data,
+                    backdrop_paths=backdrop_paths,
+                    geographic=do_geographic,
+                    schematic=do_schematic,
+                    progressive=args.progressive,
+                    min_trips=args.min_trips,
+                    skip_existing=args.skip_existing,
+                    indic_font_fallback=args.indic_font_fallback,
+                    all_station_labels=use_all_labels,
+                    flat_labels=flat_labels,
+                )
+
+                if ok:
+                    success_count += 1
+                    print("  Done.", file=sys.stderr)
+                else:
+                    print("  Failed.", file=sys.stderr)
+
+        print(f"\nCompleted: {success_count}/{len(stops_to_process)} stops", file=sys.stderr)
     print(f"Output: {output_dir}/", file=sys.stderr)
 
 
