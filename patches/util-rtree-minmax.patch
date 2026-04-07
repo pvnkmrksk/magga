@@ -1,0 +1,30 @@
+diff --git a/3rdparty/RTree.h b/3rdparty/RTree.h
+index 28d4691..f903acd 100644
+--- a/3rdparty/RTree.h
++++ b/3rdparty/RTree.h
+@@ -16,12 +16,8 @@
+ namespace DA  {
+ 
+ #define ASSERT assert // RTree uses ASSERT( condition )
+-#ifndef Min
+-  #define Min std::min
+-#endif //Min
+-#ifndef Max
+-  #define Max std::max
+-#endif //Max
++#define RTREE_MIN std::min
++#define RTREE_MAX std::max
+ 
+ //
+ // RTree.h
+@@ -1154,8 +1150,8 @@ typename RTREE_QUAL::Rect RTREE_QUAL::CombineRect(const Rect* a_rectA, const Rec
+ 
+   for(int index = 0; index < NUMDIMS; ++index)
+   {
+-    newRect.m_min[index] = Min(a_rectA->m_min[index], a_rectB->m_min[index]);
+-    newRect.m_max[index] = Max(a_rectA->m_max[index], a_rectB->m_max[index]);
++    newRect.m_min[index] = RTREE_MIN(a_rectA->m_min[index], a_rectB->m_min[index]);
++    newRect.m_max[index] = RTREE_MAX(a_rectA->m_max[index], a_rectB->m_max[index]);
+   }
+ 
+   return newRect;

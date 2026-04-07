@@ -95,6 +95,12 @@ cmake ..
 make -j
 ```
 
+If the C++ build fails because `Min`/`Max` macros in `src/util` clash with your platform headers, apply the bundled patch once (from the repo root):
+
+```bash
+patch -p1 -d src/util < patches/util-rtree-minmax.patch
+```
+
 If you already cloned without `--recurse-submodules`:
 ```bash
 git submodule update --init --recursive
