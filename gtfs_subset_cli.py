@@ -1,50 +1,10 @@
 #!/usr/bin/env python3
 
 """
-GTFS Subset CLI Tool
-===================
+GTFS Subset CLI - Create filtered subsets of GTFS data with optional map visualization.
 
-Part of the Magga (ಮಗ್ಗ/मग्ग) project - A transit map generation toolkit.
-
-"Magga" carries dual meaning - a loom (ಮಗ್ಗ) in Kannada that weaves intricate
-patterns, and "path" (मग्ग) in Pali Buddhism, referring to the noble path to
-enlightenment. Much like how a loom weaves threads into beautiful patterns,
-public transit weaves paths through our cities. And just as the Noble Eightfold
-Path guides beings toward enlightenment, accessible public transit guides
-communities toward sustainability and equity - reducing emissions, connecting
-people to opportunities, and weaving the fabric of more livable cities.
-
-A command-line tool for creating filtered subsets of GTFS data based on various
-criteria such as specific stops, routes, or minimum trip counts.
-
-For more information, visit: https://github.com/pvnkmrksk/magga
-
-MIT License
-
-Copyright (c) 2024 Pavan Kumar (@pvnkmrksk)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-This work builds upon the LOOM project (https://github.com/ad-freiburg/loom)
-and is distributed under compatible terms.
-
-Author: ಪವನ ಕುಮಾರ ​| Pavan Kumar, PhD (@pvnkmrksk)
+Part of the Magga (ಮಗ್ಗ/मग्ग) project: https://github.com/pvnkmrksk/magga
+License: GPL-3.0 — see LICENSE file. Author: Pavan Kumar (@pvnkmrksk)
 """
 
 import argparse
@@ -57,6 +17,7 @@ def create_subset(input_gtfs: str, *,
                  output: str = None,
                  stops: str = None,
                  routes: str = None,
+                 route_ids: str = None,
                  min_trips: int = None,
                  map: bool = False,
                  map_output: str = None,
@@ -76,6 +37,7 @@ def create_subset(input_gtfs: str, *,
         output (str, optional): Output path for the filtered GTFS
         stops (str, optional): Comma-separated stop IDs to include
         routes (str, optional): Route patterns to match (supports wildcards)
+        route_ids (str, optional): Comma-separated ``route_id`` values (exact)
         min_trips (int, optional): Minimum trips per route
         map (bool, optional): Generate HTML map visualization
         map_output (str, optional): Custom path for map output
@@ -98,12 +60,15 @@ def create_subset(input_gtfs: str, *,
     # Parse filters
     stop_ids = [s.strip() for s in stops.split(',')] if stops else None
     route_patterns = [r.strip() for r in routes.split(',')] if routes else None
+    rid_list = [s.strip() for s in route_ids.split(',')] if route_ids else None
     
     # Generate output name if not provided
     if not output:
         filters = []
         if stop_ids:
             filters.append(f"stops_{'-'.join(stop_ids)}")
+        if rid_list:
+            filters.append(f"routeids_{'-'.join(rid_list[:4])}{'_etc' if len(rid_list) > 4 else ''}")
         if route_patterns:
             filters.append(f"routes_{'-'.join(route_patterns)}")
         if min_trips:
@@ -120,6 +85,7 @@ def create_subset(input_gtfs: str, *,
         output_path=output,
         stop_ids=stop_ids,
         route_patterns=route_patterns,
+        route_ids=rid_list,
         min_trips=min_trips
     )
     
@@ -147,25 +113,15 @@ def create_subset(input_gtfs: str, *,
         )
         print(f"Map created at: {map_path}", file=sys.stderr)
     
-    # Print the output path as the last line
-    print(output, file=sys.stderr)
+    # Print the output path to stdout (used by process_transit_map.sh)
+    print(output)
     return Path(output)
 
 def main():
     parser = argparse.ArgumentParser(
         description='''
-Magga (ಮಗ್ಗ/मग्ग) GTFS Subset Generator
-====================================
-
-Drawing inspiration from both the Kannada word for loom (ಮಗ್ಗ) and the Pali word
-for path (मग्ग), this tool helps select and filter GTFS data to create focused
-transit maps. Just as a loom carefully selects threads for a pattern, and the
-Noble Path guides toward enlightenment, this tool helps illuminate the transit
-paths that connect communities to opportunities.
-
-Create filtered subsets of GTFS data based on various criteria such as stops,
-routes, or minimum trip counts. Optionally generate interactive visualizations
-of the resulting network.
+Magga GTFS Subset Generator — Filter GTFS data by stops, routes, or minimum
+trip counts. Optionally generate interactive HTML map visualizations.
 ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -182,6 +138,8 @@ of the resulting network.
                             help='Comma-separated stop IDs to include')
     filter_group.add_argument('-r', '--routes',
                             help='Route patterns to match (supports wildcards)')
+    filter_group.add_argument('--route-ids',
+                            help='Comma-separated route_id values (exact GTFS ids)')
     filter_group.add_argument('-m', '--min-trips',
                             type=int,
                             help='Minimum trips per route')
@@ -229,6 +187,7 @@ examples:
 
   # Complex filtering with visualization
   %(prog)s input.zip -s "STOP1,STOP2" -r "138*" -m 10 --map
+  %(prog)s input.zip --route-ids "24o,1jx" -o corridor.zip
 
 notes:
   - Route patterns support wildcards (e.g., "138*" matches "138A", "138B")

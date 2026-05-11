@@ -1,8 +1,19 @@
 #!/bin/bash
+# process_doublets.sh - Process GTFS data for doublet stop pairs
+# Part of Magga: https://github.com/pvnkmrksk/magga
 
 if [ $# -eq 0 ] || [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
     echo "Usage: $0 <gtfs_file>"
-    echo "Process GTFS file for each doublet stop pair"
+    echo ""
+    echo "Process GTFS file for each doublet stop pair from Doublet_stops.csv."
+    echo "Generates transit maps for each pair using process_transit_map.sh."
+    echo ""
+    echo "Expects Doublet_stops.csv in current directory with columns:"
+    echo "  index, stop_name, stop_id_1, stop_id_2, ..."
+    echo ""
+    echo "Config (edit in script):"
+    echo "  START_ROW  — skip to this row number (default: 30)"
+    echo "  OUTPUT_DIR — output directory (default: doublet_output)"
     exit 0
 fi
 

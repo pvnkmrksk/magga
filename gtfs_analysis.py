@@ -1,52 +1,83 @@
 #!/usr/bin/env python3
 
 """
-GTFS Analysis Tool
-================
+GTFS Analysis - Analyze, filter, and subset GTFS transit data.
 
-Part of the Magga (ಮಗ್ಗ) project - A transit map generation toolkit.
-"Magga" means loom in Kannada, reflecting the weaving of intricate patterns,
-much like the organic patterns of transit routes in a city.
-
-A comprehensive tool for analyzing GTFS data, providing metrics and insights
-about transit networks. Supports data subsetting and route coloring.
-
-For more information, visit: https://github.com/pvnkmrksk/magga
-
-MIT License
-
-Copyright (c) 2024 Pavan Kumar (@pvnkmrksk)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-This work builds upon the LOOM project (https://github.com/ad-freiburg/loom)
-and is distributed under compatible terms.
-
-Author: ಪವನ ಕುಮಾರ ​| Pavan Kumar, PhD (@pvnkmrksk)
+Part of the Magga (ಮಗ್ಗ/मग्ग) project: https://github.com/pvnkmrksk/magga
+License: GPL-3.0 — see LICENSE file. Author: Pavan Kumar (@pvnkmrksk)
 """
 
+import os
 import partridge as ptg
 import pandas as pd
 from typing import List, Set, Dict, Union
 from pathlib import Path
 import natsort
 import sys
+from zipfile import ZipFile
+
+
+def _copy_missing_auxiliary_gtfs_files(source_zip_path: str, subset_dir: str) -> None:
+    """Copy agency.txt / calendar*.txt / … from the source zip if the subset lacks them.
+
+    ``partridge.extract_feed`` views often omit optional tables; ``gtfs2graph`` then
+    fails with missing ``agency.txt`` or invalid service references.
+    """
+    wanted = (
+        "agency.txt",
+        "feed_info.txt",
+        "calendar.txt",
+        "calendar_dates.txt",
+        "attributions.txt",
+        "translations.txt",
+    )
+    try:
+        with ZipFile(source_zip_path, "r") as zin:
+            names = zin.namelist()
+            for base in wanted:
+                dest = os.path.join(subset_dir, base)
+                if os.path.isfile(dest):
+                    continue
+                member = next(
+                    (
+                        n
+                        for n in names
+                        if n.replace("\\", "/").split("/")[-1].lower() == base.lower()
+                    ),
+                    None,
+                )
+                if member is None:
+                    continue
+                with open(dest, "wb") as out:
+                    out.write(zin.read(member))
+    except OSError:
+        pass
+
+
+def _ensure_minimal_agency_txt(subset_dir: str) -> None:
+    """Write a minimal ``agency.txt`` if the subset still has none (gtfs2graph requires it)."""
+    path = os.path.join(subset_dir, "agency.txt")
+    if os.path.isfile(path):
+        return
+    routes_path = os.path.join(subset_dir, "routes.txt")
+    if not os.path.isfile(routes_path):
+        return
+    try:
+        routes = pd.read_csv(routes_path, dtype=str)
+    except (OSError, ValueError, pd.errors.ParserError):
+        return
+    if routes.empty:
+        return
+    if "agency_id" in routes.columns:
+        aids = routes["agency_id"].dropna().astype(str).unique()
+        aid = aids[0] if len(aids) else "MAGGA"
+    else:
+        aid = "MAGGA"
+    header = "agency_id,agency_name,agency_url,agency_timezone"
+    row = f'{aid},Transit Agency,https://example.com,Asia/Kolkata'
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(header + "\n" + row + "\n")
+
 
 class GTFSAnalyzer:
     """
@@ -145,6 +176,7 @@ class GTFSAnalyzer:
                      output_path: str,
                      stop_ids: List[str] = None,
                      route_patterns: List[str] = None,
+                     route_ids: List[str] = None,
                      min_trips: int = None) -> 'GTFSAnalyzer':
         """
         Create a GTFS subset by chaining multiple filters.
@@ -159,13 +191,36 @@ class GTFSAnalyzer:
         route_patterns : List[str], optional
             List of route patterns (supports wildcards like "138*"). Only stops served by 
             these routes will be included.
+        route_ids : List[str], optional
+            Exact ``route_id`` values (union with patterns/stops). Use for ranked subsets
+            when ``route_short_name`` is not unique.
         min_trips : int, optional
             Minimum number of trips a route must have to be included
         """
         qualifying_trips = set()
         stops_to_keep = set()
+
+        restricted = bool(
+            (route_patterns and len(route_patterns) > 0)
+            or (stop_ids and len(stop_ids) > 0)
+            or (route_ids and len(route_ids) > 0)
+        )
+
+        # Explicit route IDs (e.g. top-N by trip count from network_stats)
+        if route_ids and len(route_ids) > 0:
+            rset = set(route_ids)
+            sub_trip_ids = self.feed.trips.loc[
+                self.feed.trips["route_id"].isin(rset), "trip_id"
+            ]
+            qualifying_trips.update(sub_trip_ids)
+            if not stop_ids:
+                stops_to_keep.update(
+                    self.feed.stop_times.loc[
+                        self.feed.stop_times["trip_id"].isin(sub_trip_ids), "stop_id"
+                    ]
+                )
         
-        # First handle route patterns if specified
+        # Route short-name patterns if specified
         if route_patterns and len(route_patterns) > 0:
             for pattern in route_patterns:
                 if '*' in pattern:
@@ -212,15 +267,41 @@ class GTFSAnalyzer:
                 ]['stop_id']
             )
         
-        # If neither stops nor routes specified, use all trips and stops
+        # If no restriction was requested, use all trips and stops
         if not qualifying_trips:
+            if restricted:
+                raise ValueError(
+                    "No trips matched the given route_id / route pattern / stop filters."
+                )
             qualifying_trips = set(self.feed.trips['trip_id'])
             stops_to_keep = set(self.feed.stops['stop_id'])
-        
-        # Apply minimum trips filter if specified
+
+        # Apply minimum trips filter if specified. If every candidate route is below
+        # the threshold (typical for rare-first / fringe stops), the intersection is
+        # empty: extract_feed then writes an empty zip and we only ship routes.txt —
+        # gtfs2graph fails (e.g. missing agency.txt). Prefer a usable subset.
+        pre_min_trips = qualifying_trips.copy()
         if min_trips:
             qualifying_trips &= self.subset_by_min_trips(min_trips)
-            
+            if not qualifying_trips and pre_min_trips:
+                print(
+                    "GTFS subset: min_trips excluded every route in the candidate set; "
+                    f"using the pre-filter trip set for this subset (min_trips={min_trips}).",
+                    file=sys.stderr,
+                )
+                qualifying_trips = pre_min_trips
+
+        if not qualifying_trips:
+            raise ValueError(
+                "No trips remain for this subset after filters (nothing to export)."
+            )
+
+        stops_to_keep = set(
+            self.feed.stop_times[
+                self.feed.stop_times["trip_id"].isin(qualifying_trips)
+            ]["stop_id"]
+        )
+
         # Get routes to keep
         routes_to_keep = set(self.feed.trips[
             self.feed.trips['trip_id'].isin(qualifying_trips)
@@ -272,7 +353,10 @@ class GTFSAnalyzer:
                 os.path.join(tmpdir, 'routes.txt'),
                 os.path.join(subset_dir, 'routes.txt')
             )
-            
+
+            _copy_missing_auxiliary_gtfs_files(self.feed_path, subset_dir)
+            _ensure_minimal_agency_txt(subset_dir)
+
             # Create the final zip with all files including modified routes.txt
             with ZipFile(output_path, 'w') as zip_ref:
                 for root, _, files in os.walk(subset_dir):
@@ -291,14 +375,22 @@ class GTFSAnalyzer:
         """
         import matplotlib.pyplot as plt
         import numpy as np
-        
+
+        if routes_df.empty:
+            routes_df = routes_df.copy()
+            routes_df["route_color"] = ""
+            routes_df["route_text_color"] = "FFFFFF"
+            return {}
+
         # Get route names and IDs as numpy arrays
-        route_names = routes_df['route_short_name'].fillna('').values
-        route_ids = routes_df['route_id'].values
+        route_names = routes_df['route_short_name'].fillna('').to_numpy()
+        route_ids = routes_df['route_id'].to_numpy()
         
-        # Create sorted indices using natsort
-        sorted_idx = np.array(natsort.index_natsorted(route_names))
-        
+        # Create sorted indices using natsort (must be integer dtype for NumPy 2.x fancy indexing)
+        sorted_idx = np.asarray(
+            natsort.index_natsorted(route_names), dtype=np.intp
+        )
+
         # Apply sorting to both arrays at once
         route_ids = route_ids[sorted_idx]
         

@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+Process Doublet Stops - Batch-generate GTFS subsets and maps for stop pairs.
+
+Reads stop pairs from Doublet_stops.csv (columns: stop_name, stop_id_1, stop_id_2).
+Part of Magga: https://github.com/pvnkmrksk/magga
+"""
 
 import pandas as pd
 from pathlib import Path
