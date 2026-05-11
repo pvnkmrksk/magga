@@ -8,27 +8,27 @@ A toolkit for weaving transit data into beautiful, meaningful maps.
 
 ## Example maps (BMTC — Mathikere)
 
-**Geographic** maps follow the street graph; **schematic** maps use an octilinear layout. PNGs live under [`examples/readme/`](examples/readme/) so they render inline on GitHub.
+**Geographic** maps follow the street graph; **schematic** maps use an octilinear layout. The images below use **HTML `<img>` tags** with `https://raw.githubusercontent.com/...` URLs so they show **inline in Cursor/VS Code Markdown preview** (the preview webview often fails to load plain `![](relative.png)` paths). The same files live in the repo under [`examples/readme/`](examples/readme/).
 
 ### Mathikere Post Office (small neighborhood subset)
 
 Geographic:
 
-![Mathikere Post Office — geographic](examples/readme/mathikere_post_office_geographic.png)
+<p align="center"><img src="https://raw.githubusercontent.com/pvnkmrksk/magga/master/examples/readme/mathikere_post_office_geographic.png" alt="Mathikere Post Office — geographic transit map" width="920"></p>
 
 Schematic:
 
-![Mathikere Post Office — schematic](examples/readme/mathikere_post_office_schematic.png)
+<p align="center"><img src="https://raw.githubusercontent.com/pvnkmrksk/magga/master/examples/readme/mathikere_post_office_schematic.png" alt="Mathikere Post Office — schematic octilinear map" width="920"></p>
 
 ### S R S Mathikere corridor (paired-stop batch)
 
 Geographic:
 
-![S R S Mathikere corridor — geographic](examples/readme/srs_mathikere_corridor_geographic.png)
+<p align="center"><img src="https://raw.githubusercontent.com/pvnkmrksk/magga/master/examples/readme/srs_mathikere_corridor_geographic.png" alt="S R S Mathikere corridor — geographic map" width="920"></p>
 
 Schematic:
 
-![S R S Mathikere corridor — schematic](examples/readme/srs_mathikere_corridor_schematic.png)
+<p align="center"><img src="https://raw.githubusercontent.com/pvnkmrksk/magga/master/examples/readme/srs_mathikere_corridor_schematic.png" alt="S R S Mathikere corridor — schematic map" width="920"></p>
 
 ## Command layers
 
