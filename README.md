@@ -8,7 +8,7 @@ A toolkit for weaving transit data into beautiful, meaningful maps.
 
 ## Example maps (BMTC — Mathikere)
 
-**Geographic** maps follow the street graph; **schematic** maps use an octilinear layout. The images below use **HTML `<img>` tags** with `https://raw.githubusercontent.com/...` URLs so they show **inline in Cursor/VS Code Markdown preview** (the preview webview often fails to load plain `![](relative.png)` paths). The same files live in the repo under [`examples/readme/`](examples/readme/).
+**Geographic** maps follow the street graph; **schematic** maps use an octilinear layout. These screenshots were built with **large station and route label sizes** (`process_transit_map.sh` `-sl` / `-ll`, `-ts 1.0`) so stop names and line numbers stay readable at README scale. The images use **HTML `<img>` tags** with `https://raw.githubusercontent.com/...` URLs so they show **inline in Cursor/VS Code Markdown preview** (the preview webview often fails to load plain `![](relative.png)` paths). Source PNGs live in [`examples/readme/`](examples/readme/).
 
 ### Mathikere Post Office (small neighborhood subset)
 
