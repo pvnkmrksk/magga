@@ -6,6 +6,30 @@ A toolkit for weaving transit data into beautiful, meaningful maps.
 
 "Magga" carries dual meaning — a loom (ಮಗ್ಗ) in Kannada that weaves intricate patterns, and "path" (मग्ग) in Pali, referring to the noble path toward enlightenment. We weave transit routes into readable maps, illuminating paths toward sustainable and equitable mobility.
 
+## Example maps (BMTC — Mathikere)
+
+**Geographic** maps follow the street graph; **schematic** maps use an octilinear layout. PNGs live under [`examples/readme/`](examples/readme/) so they render inline on GitHub.
+
+### Mathikere Post Office (small neighborhood subset)
+
+Geographic:
+
+![Mathikere Post Office — geographic](examples/readme/mathikere_post_office_geographic.png)
+
+Schematic:
+
+![Mathikere Post Office — schematic](examples/readme/mathikere_post_office_schematic.png)
+
+### S R S Mathikere corridor (paired-stop batch)
+
+Geographic:
+
+![S R S Mathikere corridor — geographic](examples/readme/srs_mathikere_corridor_geographic.png)
+
+Schematic:
+
+![S R S Mathikere corridor — schematic](examples/readme/srs_mathikere_corridor_schematic.png)
+
 ## Command layers
 
 Work from the top when you can; drop down only when you need a narrow knob or a debugger’s view.
@@ -411,7 +435,7 @@ magga/
 │   ├── shared/                 #   Shared utilities
 │   ├── cppgtfs/                #   GTFS C++ library (submodule)
 │   └── util/                   #   Utility library (submodule)
-├── examples/                   # Sample data and rendered maps
+├── examples/                   # Sample data; `examples/readme/*.png` = README screenshots
 ├── Dockerfile                  # Docker build with Gurobi support
 └── CMakeLists.txt              # C++ build configuration
 ```

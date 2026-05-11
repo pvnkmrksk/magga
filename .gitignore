@@ -31,4 +31,5 @@ compile_commands.json
 *.DS_Store
 *.pdf
 *.png
+!examples/readme/*.png
 *.svg
